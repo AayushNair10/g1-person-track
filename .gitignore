@@ -1,0 +1,30 @@
+# Build outputs
+build/
+*.o
+person_track
+
+# Models and engines (regenerate with scripts; engines are robot-specific)
+*.pt
+*.onnx
+*.engine
+*.plan
+
+# Recorded media (may show people) and run outputs
+*.mp4
+*.mov
+*.avi
+*.jpg
+*.png
+!docs/**/*.png
+logs/*.csv
+logs/*.log
+logs/*.txt
+frames/
+
+# Python / editor junk
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+.vscode/
+.idea/
