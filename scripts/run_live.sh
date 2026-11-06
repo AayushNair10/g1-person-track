@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Phase 5b (on the robot): a live run on the head camera, with everything it measures kept in its own
 # folder runs/<NNN>_<TAG>/ for later comparison (scripts/analyze_runs.py).
-# Option B (default source /dev/video4): stop videohub_pc4 by hand first (docs/RUNBOOK.md section 7).
+# Option B (default source /dev/video4): start it right after stopping videohub_pc4, on the same line:
+#   sudo -v; sudo pkill -f videohub_pc4; TAG=walk scripts/run_live.sh
 #   scripts/run_live.sh                                        120 s, default engine, 640x360 @ 30 FPS
 #   TAG=walk NOTE="2 m, walking left/right, lights on" scripts/run_live.sh
 #   DUR=60 ENGINE=models/yolo26n_416x256.fp16.engine TAG=416 scripts/run_live.sh
@@ -21,13 +22,8 @@ NOTE=${NOTE:-}
 EXTRA=${EXTRA:-}
 APP=build/person_track
 [ -x "$APP" ] || { echo "build first: make -j4"; exit 1; }
-if [[ "$SOURCE" == /dev/video* ]]; then  # give a just-stopped videohub_pc4 a few seconds to let go of the camera
-    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f videohub_pc4 >/dev/null || break; sleep 0.5; done
-    if pgrep -f videohub_pc4 >/dev/null; then
-        echo "videohub_pc4 is running and holds the camera. Stop it first: sudo pkill -f videohub_pc4"
-        exit 1
-    fi
-fi
+# No waiting here: master_service restarts a stopped videohub_pc4 within ~2-3 s, so the app must start right away
+# (it opens the camera before loading the engine). Start as:  sudo pkill -f videohub_pc4; scripts/run_live.sh
 
 mkdir -p runs
 last=$(ls -d runs/[0-9][0-9][0-9]_* 2>/dev/null | sed 's|^runs/\([0-9]*\)_.*|\1|' | sort -n | tail -1)

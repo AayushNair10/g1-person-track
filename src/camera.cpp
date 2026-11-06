@@ -147,8 +147,10 @@ Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()), every_(c
     if (!ok)
         die("cannot open " + desc_ +
             "\n  videohub: is videohub_pc4 running, and was OpenCV built with GStreamer?"
-            "\n  /dev/videoN: is videohub_pc4 still holding it (sudo fuser -v /dev/video*)? is this a size / rate"
-            "\n  the camera offers (v4l2-ctl -d /dev/video4 --list-formats-ext)? permission (ls -l /dev/video4)?");
+            "\n  /dev/videoN: busy? videohub_pc4 holds it (sudo fuser -v /dev/video*); master_service restarts it"
+            "\n  ~2-3 s after it is stopped, so start right after stopping it, with no pause:"
+            "\n    sudo pkill -f videohub_pc4; build/person_track"
+            "\n  or a size / rate the camera does not offer (v4l2-ctl -d /dev/video4 --list-formats-ext)?");
 
     cv::Mat probe;
     if (!cap_->read(probe) || probe.empty()) die(desc_ + " opened but gives no frames");

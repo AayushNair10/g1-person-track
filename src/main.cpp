@@ -231,13 +231,6 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
-    // engine first: with --hw-resize the camera is asked for the model's picture size
-    cudaStream_t stream;
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    const int dla = a.dla >= 0 ? a.dla : dla_from_name(a.engine);
-    pt::TrtEngine eng(a.engine, stream, a.graph, dla);
-    const pt::OutputLayout layout = layout_of(eng);
-
     pt::CameraConfig cc;
     cc.source = a.source;
     cc.format = a.format;
@@ -246,12 +239,25 @@ int main(int argc, char** argv) {
     cc.height = a.height;
     cc.fps = a.fps;
     cc.every = a.every;
+    // Camera first: on the G1, master_service restarts a stopped videohub_pc4 within ~2-3 s, so the camera must
+    // be taken right away (loading the engine takes longer). Only --hw-resize needs the engine's input size
+    // first, to ask the VIC for the right picture size.
+    std::unique_ptr<pt::Camera> cam_first;
+    if (!a.hw_resize) cam_first.reset(new pt::Camera(cc));
+
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    const int dla = a.dla >= 0 ? a.dla : dla_from_name(a.engine);
+    pt::TrtEngine eng(a.engine, stream, a.graph, dla);
+    const pt::OutputLayout layout = layout_of(eng);
+
     if (a.hw_resize) {  // the picture inside the letterbox, at the camera's aspect ratio (even sizes for NV12)
         const pt::Letterbox at_cam = pt::make_letterbox(a.width, a.height, eng.input_w(), eng.input_h());
         cc.out_w = at_cam.new_w & ~1;
         cc.out_h = at_cam.new_h & ~1;
+        cam_first.reset(new pt::Camera(cc));
     }
-    pt::Camera cam(cc);
+    pt::Camera& cam = *cam_first;
     // camera size: the frames' own size, or the stream's full size when the VIC scaled them
     const int cam_w = cam.hw_resized() ? a.width : cam.width(), cam_h = cam.hw_resized() ? a.height : cam.height();
 
