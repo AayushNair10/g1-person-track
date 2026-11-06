@@ -32,7 +32,7 @@ def trtexec_rows(d):
     for log in sorted(glob.glob(os.path.join(d, "trtexec_*.log"))):
         name = os.path.basename(log)[len("trtexec_"):-len(".log")]
         txt = open(log, errors="replace").read()
-        m = re.findall(r"GPU Compute Time: (.*)", txt)
+        m = re.findall(r"GPU Compute Time: (min.*)", txt)
         q = re.findall(r"Throughput: ([0-9.]+) qps", txt)
         if not m:
             err = re.findall(r"(?i)(error[^\n]*)", txt)

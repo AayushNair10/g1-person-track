@@ -78,7 +78,7 @@ done
     for log in logs/trtexec_*.log; do
         [ -f "$log" ] || continue
         e=${log#logs/trtexec_}; e=${e%.log}
-        line=$(grep "GPU Compute Time:" "$log" | tail -1)
+        line=$(grep "GPU Compute Time: min" "$log" | tail -1)
         med=$(echo "$line" | grep -o "median = [0-9.]*" | grep -o "[0-9.]*$")
         mean=$(echo "$line" | grep -o "mean = [0-9.]*" | grep -o "[0-9.]*$")
         p99=$(echo "$line" | grep -o "percentile(99%) = [0-9.]*" | grep -o "[0-9.]*$")
