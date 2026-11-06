@@ -9,7 +9,8 @@ Two terminal windows on the Mac:
 
 The program runs on the robot; its text output appears in Terminal 2. Everything it writes stays in
 `~/aayush_person_track/` on the robot. It never moves the robot, never uses sudo, and never stops or starts
-Unitree's services: you stop `videohub_pc4` by hand in step 5 and a reboot brings it back (step 10).
+Unitree's services: you stop `videohub_pc4` by hand at the start of each run (step 5); `master_service` restarts
+it by itself, and it gets the camera back when our program exits (a reboot, step 10, resets everything).
 
 ## 0. Connect (Mac)
 
