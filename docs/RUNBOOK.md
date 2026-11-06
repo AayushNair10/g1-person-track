@@ -50,6 +50,7 @@ leaves the GPU free (layers it cannot run fall back to the GPU). Skip any that f
 ```bash
 make -j4                                     # ends with "built build/person_track"; clock-skew warnings are fine
 ```
+Same without make (FaceHandTrack-style, same preinstalled tools): `scripts/build.sh`.
 
 ## 4. Check the camera (Terminal 2, service still running)
 
