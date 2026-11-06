@@ -30,7 +30,7 @@ g1_ssh "mkdir -p ~/$G1_DIR/models ~/$G1_DIR/src ~/$G1_DIR/build ~/$G1_DIR/logs ~
 if [ "$what" = code ] || [ "$what" = all ]; then
     scp -q "${G1_SSH_OPTS[@]}" src/*.cpp src/*.hpp src/*.cu "$DEST/src/"
     scp -q "${G1_SSH_OPTS[@]}" Makefile "$DEST/"
-    scp -q "${G1_SSH_OPTS[@]}" scripts/*.sh scripts/make_results.py "$DEST/scripts/"
+    scp -q "${G1_SSH_OPTS[@]}" scripts/*.sh scripts/make_results.py scripts/compare_runs.py "$DEST/scripts/"
     g1_ssh "chmod +x ~/$G1_DIR/scripts/*.sh"
 fi
 if [ "$what" = models ] || [ "$what" = all ]; then

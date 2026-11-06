@@ -69,7 +69,55 @@ Python reference. End-to-end detections match with IoU >= 0.999.
 **Compilation.** `tests/desktop/syntax_check.sh` compiles every source (and both sides of the CUDA file)
 against the real TensorRT 8.5, CUDA 11.4 and OpenCV 4.2.0 headers with `-Wall -Wextra -Wshadow`: no warnings.
 
-## Frame rate
+## What runs
+
+**Models.** The detector is **YOLO26n** (Ultralytics, COCO-pretrained, 80 classes, of which only class 0
+"person" is kept): 2.42 M parameters, `yolo26n.pt` 5.5 MB. It is exported with the NMS-free end-to-end head,
+input 1x3x384x640, output 1x300x6, and built on the robot as the TensorRT fp16 engine
+`models/yolo26n_640x384.fp16.engine` (the default). The tracker, OC-SORT, is not a neural network: it is a Kalman
+filter plus box matching, with no appearance/ReID model. Kept only for comparison or as fallbacks: the other input
+sizes, the fp32 engines, `yolo26n-raw` (same weights, raw head + C++ NMS) and `yolo11n`.
+
+**Packages on the robot** (all preinstalled with JetPack 5.1.1, nothing added): TensorRT 8.5.2 (`libnvinfer` in the
+app; `trtexec` and its ONNX parser only to build engines), CUDA 11.4 (`libcudart`; `nvcc` for the one kernel),
+OpenCV 4.2 (`core`, `imgproc`, `videoio`: GStreamer capture, MP4 writer, drawing), GStreamer 1.16 with NVIDIA's
+plugins (`udpsrc ! rtph264depay ! h264parse ! nvv4l2decoder ! nvvidconv ! appsink`; `videoconvert` only in the
+lab's BGR pipeline), g++ 9.4 / make, the C++17 standard library and pthreads. `tegrastats` and the system
+Python 3.8 standard library are used by the measurement scripts. No Python ML stack, Eigen or ROS in the app.
+
+**Packages on the laptop** (the existing venv, nothing installed): ultralytics 8.4.174 (export and reference),
+torch 2.14.1 / torchvision 0.29.1 (under ultralytics), onnx 1.23.2, onnxslim 0.1.98, onnxruntime 1.31.0, numpy
+2.3.5, opencv-python 5.0, lap 0.5.13 (the Ultralytics tracker the C++ port is checked against); clang from Xcode
+for the desktop C++ tests.
+
+## Frame rate and compute
+
+Compute of the detector per frame (multiply-adds x 2, from the ONNX graphs) and, on your two clips (300 frames),
+how the largest person's box compares with the 640x384 default (the robot clip decides, because people are
+smaller at robot distances):
+
+| input | GFLOPs | vs 640x384 on the laptop clips |
+|---|---|---|
+| 640x640 (the plan) | 5.48 | same: 0 missed, box IoU 0.988 |
+| **640x384 (default)** | **3.26** | reference |
+| 416x416 | 2.29 | |
+| 416x256 | 1.40 | 1 of 286 missed, IoU 0.972 |
+| 320x320 | 1.35 | |
+| 320x192 | 0.81 | 4 of 286 missed, IoU 0.962 (5th percentile 0.891) |
+
+Switches for lower compute, all measured on the robot by `run_offline.sh` and the runbook's step 5c (defaults
+stay the tested lab pipeline until the numbers are in):
+
+- `--hw-resize`: the VIC (Jetson's video scaler, separate from GPU and CPU) shrinks 1280x720 to the model's
+  picture size inside GStreamer, so a quarter of the pixels (640x360 NV12, 0.35 MB instead of 2.8 MB BGR) reaches
+  the CPU and the GPU; the GPU kernel then only pads. Boxes still come out in 1280x720 camera pixels. Laptop
+  simulation: same target, box IoU >= 0.99 vs the full-size path (`tests/desktop/check_pipeline.py`, part 4).
+- a smaller engine: 416x256 is 2.3x and 320x192 4x less compute than 640x384.
+- lean engines (`LEAN=1 scripts/build_engines.sh`): no cuDNN/cuBLAS, so less RAM and a faster start.
+- DLA engines (`DLA=0 scripts/build_engines.sh`): the network runs on the Orin's deep-learning accelerator, which
+  leaves the GPU free.
+- `--every N`: process 1 of every N frames (skipped frames are never copied), with the tracker's memory scaled
+  to the same number of seconds.
 
 The camera stream is 15 FPS, so live output cannot go above 15 FPS with Option A. What can be optimised is
 keeping every frame and cutting the delay from frame arrival to result. Done:
@@ -82,6 +130,7 @@ keeping every frame and cutting the delay from frame arrival to result. Done:
 - `videohub-nv12` source: NV12 straight from the hardware decoder, colour conversion done on the GPU, skipping
   the CPU `videoconvert` in the lab pipeline (bit-exact with OpenCV's NV12->BGR + resize)
 - switches to measure on the robot: `--zero-copy`, `--no-graph`, `--dec-opts "enable-max-performance=1"`
+  (the last one raises the decoder clock: lower latency, slightly more power)
 
 `scripts/run_offline.sh` measures the pipeline's maximum rate without the camera limit. Going above 15 FPS live
 needs Option B (direct RealSense, up to 60 FPS). The app supports it (`--source /dev/video4`), but it means
@@ -102,7 +151,7 @@ src/                 C++ app (person_track)
 Makefile             build on the robot: make -j4 -> build/person_track
 scripts/             export_models.py, validate_onnx.py, yolo_ref.py (laptop); phase1_verify.sh, deploy.sh,
                      fetch_results.sh, g1_env.sh (laptop -> robot); build_engines.sh, record_clip.sh,
-                     run_offline.sh, run_live.sh, make_results.py (robot)
+                     run_offline.sh, run_live.sh, compare_runs.py, make_results.py (robot)
 tests/desktop/       laptop checks: tracker vs Ultralytics, preprocessing/decoding vs OpenCV/ORT, compile check
 models/              ONNX files (generated, not in git), onnx_report.json, onnx_validation.md
 docs/                RUNBOOK.md (robot day), RESULTS.md (after the robot runs)
@@ -117,6 +166,7 @@ build/person_track                                   # default engine, head came
 build/person_track --source videohub-nv12 --quiet --csv logs/run.csv --summary logs/run.md
 build/person_track --source frames/clip1.h264 --compare models/yolo26n_640x384.fp32.engine --quiet
 build/person_track --save-video logs/demo.mp4 --save-seconds 30 --duration 30
+build/person_track --source videohub-nv12 --hw-resize --engine models/yolo26n_416x256.fp16.lean.engine  # least compute
 build/person_track --help
 ```
 

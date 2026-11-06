@@ -10,6 +10,8 @@
 //   /dev/videoN     V4L2 camera (Option B: only works if videohub_pc4 has been stopped -- ask first)
 //   "... ! appsink" any GStreamer pipeline ending in appsink (BGR or NV12)
 // Live sources keep only the newest frame (older ones are dropped and counted); files deliver every frame.
+// Hardware resize (out_w/out_h, videohub and .h264 sources): the Jetson's VIC (nvvidconv) scales the decoded
+// frame to the model's picture size and hands over NV12, so the CPU never touches a full-size frame.
 #pragma once
 
 #include <opencv2/core.hpp>
@@ -33,6 +35,8 @@ struct CameraConfig {
     std::string format = "auto";  // for .h264 files: bgr | nv12 (auto = nv12)
     std::string dec_opts;         // extra nvv4l2decoder properties, e.g. "enable-max-performance=1"
     int width = 1280, height = 720, fps = 15;  // only for /dev/videoN
+    int out_w = 0, out_h = 0;  // > 0: VIC scales frames to this size (NV12; videohub / .h264 sources)
+    int every = 1;             // deliver source frames 1, 1+N, 1+2N, ... (the others are skipped uncopied)
 };
 
 struct Frame {
@@ -66,6 +70,8 @@ public:
     double capture_fps() const { return capture_fps_.load(); }
     uint64_t frames_read() const { return frames_read_.load(); }
     uint64_t frames_dropped() const { return frames_dropped_.load(); }
+    uint64_t frames_skipped() const { return frames_skipped_.load(); }  // by `every`
+    bool hw_resized() const { return hw_resized_; }
     const std::string& description() const { return desc_; }
 
 private:
@@ -75,6 +81,8 @@ private:
     cv::VideoCapture* cap_ = nullptr;  // heap: if the reader thread is stuck we must not destroy it
     std::string desc_;
     bool live_ = true;
+    bool hw_resized_ = false;
+    int every_ = 1;
     int w_ = 0, h_ = 0, stride_ = 0, rows_ = 0, type_ = 0;
     PixelFormat fmt_ = PixelFormat::BGR;
     double src_fps_ = 0.0;
@@ -93,7 +101,7 @@ private:
     std::atomic<bool> running_{true};
     std::atomic<bool> finished_{false};
     std::atomic<double> capture_fps_{0.0};
-    std::atomic<uint64_t> frames_read_{0}, frames_dropped_{0};
+    std::atomic<uint64_t> frames_read_{0}, frames_dropped_{0}, frames_skipped_{0};
 };
 
 }  // namespace pt

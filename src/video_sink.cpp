@@ -7,8 +7,9 @@
 
 namespace pt {
 
-VideoSink::VideoSink(const std::string& path, int w, int h, PixelFormat fmt, double fps, double seconds)
-    : path_(path), w_(w), h_(h), fmt_(fmt) {
+VideoSink::VideoSink(const std::string& path, int w, int h, PixelFormat fmt, double fps, double seconds,
+                     float box_scale)
+    : path_(path), w_(w), h_(h), fmt_(fmt), box_scale_(box_scale) {
     if (!(fps > 0)) fps = 15.0;
     max_frames_ = static_cast<int>(seconds * fps + 0.5);
     ok_ = writer_.open(path_, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), fps, cv::Size(w, h));
@@ -78,23 +79,23 @@ void VideoSink::loop() {
 void VideoSink::draw(cv::Mat& img, const Overlay& ov) const {
     const double scale = img.cols / 1280.0;
     const int thin = std::max(1, static_cast<int>(2 * scale)), thick = std::max(2, static_cast<int>(4 * scale));
+    auto px = [&](float v) { return static_cast<int>(v * box_scale_); };  // camera -> frame pixels
     char txt[128];
     for (const auto& t : ov.tracks) {
         const bool is_target = ov.has_target && t.id == ov.target.id;
         if (is_target) continue;
-        cv::rectangle(img, cv::Point(static_cast<int>(t.x1), static_cast<int>(t.y1)),
-                      cv::Point(static_cast<int>(t.x2), static_cast<int>(t.y2)), cv::Scalar(160, 160, 160), thin);
+        cv::rectangle(img, cv::Point(px(t.x1), px(t.y1)), cv::Point(px(t.x2), px(t.y2)), cv::Scalar(160, 160, 160),
+                      thin);
         std::snprintf(txt, sizeof(txt), "id %d", t.id);
-        cv::putText(img, txt, cv::Point(static_cast<int>(t.x1) + 4, static_cast<int>(t.y1) + static_cast<int>(22 * scale)),
+        cv::putText(img, txt, cv::Point(px(t.x1) + 4, px(t.y1) + static_cast<int>(22 * scale)),
                     cv::FONT_HERSHEY_SIMPLEX, 0.6 * scale, cv::Scalar(160, 160, 160), thin);
     }
     if (ov.has_target) {
         const auto& t = ov.target;
-        cv::rectangle(img, cv::Point(static_cast<int>(t.x1), static_cast<int>(t.y1)),
-                      cv::Point(static_cast<int>(t.x2), static_cast<int>(t.y2)), cv::Scalar(0, 220, 0), thick);
+        cv::rectangle(img, cv::Point(px(t.x1), px(t.y1)), cv::Point(px(t.x2), px(t.y2)), cv::Scalar(0, 220, 0), thick);
         std::snprintf(txt, sizeof(txt), "TARGET id %d  %.2f", t.id, t.score);
-        cv::putText(img, txt, cv::Point(static_cast<int>(t.x1) + 4, std::max(static_cast<int>(t.y1) - 8, 20)),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.8 * scale, cv::Scalar(0, 220, 0), thick);
+        cv::putText(img, txt, cv::Point(px(t.x1) + 4, std::max(px(t.y1) - 8, 20)), cv::FONT_HERSHEY_SIMPLEX,
+                    0.8 * scale, cv::Scalar(0, 220, 0), thick);
     }
     std::snprintf(txt, sizeof(txt), "frame %llu  %.1f FPS  latency %.1f ms", static_cast<unsigned long long>(ov.frame),
                   ov.fps, ov.latency_ms);

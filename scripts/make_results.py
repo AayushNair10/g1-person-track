@@ -3,7 +3,8 @@
 
     python3 scripts/make_results.py [logs_dir]
 
-Reads: logs/phase1.txt, logs/trtexec_*.log, logs/*.md.json (person_track summaries), logs/tegrastats_*.log
+Reads: logs/phase1.txt, logs/trtexec_*.log, logs/*.md.json (person_track summaries), logs/tegrastats_*.log,
+logs/agreement.json (scripts/compare_runs.py)
 """
 import glob
 import json
@@ -120,22 +121,48 @@ def main():
                 c["dconf_max"], c["same_count_pct"]))
         out.append("")
 
+    def variant(r):
+        v = []
+        if ".lean" in r.get("engine", ""):
+            v.append("lean")
+        if r.get("dla", -1) >= 0:
+            v.append("DLA%d" % r["dla"])
+        if r.get("hw_resize"):
+            v.append("hw-resize " + r.get("frame_size", ""))
+        if r.get("every", 1) > 1:
+            v.append("every %d" % r["every"])
+        return ", ".join(v) or "-"
+
     def run_table(title, rs):
         if not rs:
             return []
         t = ["## " + title, "",
-             "| run | input | head | FPS | frames | latency p50 / p95 ms | infer p50 / p95 ms | pre p50 ms | "
+             "| run | input | variant | head | FPS | frames | latency p50 / p95 ms | infer p50 / p95 ms | pre p50 ms | "
              "post p50 ms | track p50 ms | target ID changes | frames without target | dropped |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for r in rs:
-            t.append("| %s | %s | %s | %.2f | %d | %.2f / %.2f | %.3f / %.3f | %.3f | %.3f | %.3f | %d (re-locks %d) | %d | %d |" % (
-                r["label"], r["input"], r["head"], r["fps"], r["frames"], r["total"]["p50"], r["total"]["p95"],
+            t.append("| %s | %s | %s | %s | %.2f | %d | %.2f / %.2f | %.3f / %.3f | %.3f | %.3f | %.3f | %d (re-locks %d) | %d | %d |" % (
+                r["label"], r["input"], variant(r), r["head"], r["fps"], r["frames"], r["total"]["p50"], r["total"]["p95"],
                 r["infer"]["p50"], r["infer"]["p95"], r["pre"]["p50"], r["post"]["p50"], r["track"]["p50"],
                 r["id_changes"], r["relocks"], r["without_target"], r["dropped"]))
         return t + [""]
 
     out += run_table("Phase 5a: offline throughput (recorded clip, every frame, no camera limit)",
                      [r for r in runs if r["_file"].startswith("offline_")])
+    ag = os.path.join(d, "agreement.json")
+    if os.path.exists(ag):
+        try:
+            a = json.load(open(ag))
+            out += ["## Phase 5a: what each saving changes (target vs the baseline `%s`, same clip)" % a["base"], "",
+                    "| run | frames | target in both | only baseline | only this run | same person & place % | "
+                    "target IoU mean / p5 | same person count % |", "|---|---|---|---|---|---|---|---|"]
+            for r in a["runs"]:
+                out.append("| %s | %d | %d | %d | %d | %s | %s / %s | %s |" % (
+                    r["run"], r["frames"], r["both"], r["base_only"], r["run_only"], fmt(r["same_place_pct"], 1),
+                    fmt(r["iou_mean"], 3), fmt(r["iou_p5"], 3), fmt(r["same_count_pct"], 1)))
+            out.append("")
+        except (ValueError, KeyError):
+            pass
     live = [r for r in runs if r["_file"].startswith("live_")]
     out += run_table("Phase 5b: live head camera (camera limits to ~15 FPS)", live)
 
@@ -156,7 +183,7 @@ def main():
         out.append("")
 
     md_runs = sorted(glob.glob(os.path.join(d, "*.md")))
-    md_runs = [m for m in md_runs if os.path.basename(m) not in ("RESULTS.md", "engines.md")]
+    md_runs = [m for m in md_runs if os.path.basename(m) not in ("RESULTS.md", "engines.md", "agreement.md")]
     if md_runs:
         out += ["## Full run summaries", ""]
         for m in md_runs:

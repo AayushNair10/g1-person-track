@@ -53,6 +53,19 @@ supports all of them, but this is the part most likely to fail):
 3. the lab's `make_trt85_onnx.py` approach (fold shapes, split ops) on the laptop, then copy again.
 The app reads the output shape and picks the right decoder by itself.
 
+### 3b. Lower-compute engine variants (writes models/*.engine, ~2 min each)
+
+```bash
+g1_ssh "cd ~/aayush_person_track && LEAN=1 PRECS=fp16 scripts/build_engines.sh models/yolo26n_640x384.onnx models/yolo26n_416x256.onnx models/yolo26n_320x192.onnx"
+g1_ssh "cd ~/aayush_person_track && DLA=0 scripts/build_engines.sh models/yolo26n_640x384.onnx models/yolo26n_416x256.onnx"
+g1_ssh "cat ~/aayush_person_track/logs/engines.md"
+```
+`lean` = built without cuDNN/cuBLAS, so TensorRT never loads those libraries (expect a few hundred MB less RAM
+and a faster start; GPU time should stay about the same). `dla0` = runs on DLA core 0 (the Orin NX's separate
+deep-learning accelerator), so the GPU is left free; layers the DLA cannot run fall back to the GPU (the build
+prints how many). The DLA is usually slower than the GPU, which is fine while it stays well under the 66 ms between
+frames. If a DLA build fails, skip it.
+
 ## 4. Build the app (writes build/)
 
 ```bash
@@ -70,7 +83,9 @@ g1_ssh "cd ~/aayush_person_track && scripts/record_clip.sh 60 frames/clip1.h264"
 g1_ssh "cd ~/aayush_person_track && scripts/run_offline.sh frames/clip1.h264"
 ```
 fp16 vs fp32 agreement (same input tensors) and the pipeline's maximum frame rate without the camera
-limit, for 640x384, 640x640, 416x416, 320x320.
+limit, for all six sizes. Then the compute savings on the same clip (`--hw-resize`, `--every 2`, and the lean /
+DLA engines if built), each compared with the 640x384 baseline: `logs/agreement.md` shows, frame by frame,
+whether each variant still reports the same person in the same place.
 
 ## 5b. Live, 2 minutes, Unitree services running (writes logs/)
 
@@ -85,6 +100,21 @@ g1_ssh "cd ~/aayush_person_track && DUR=30 VIDEO=30 TAG=video scripts/run_live.s
 ```
 Optional A/B for latency: `EXTRA=--zero-copy`, `EXTRA=--no-graph`, `EXTRA='--dec-opts disable-dpb=1'`
 (only if the stream has no B-frames; if the picture breaks, drop it).
+
+## 5c. Lowest compute, live (writes logs/; 60 s each, same movements)
+
+```bash
+g1_ssh "cd ~/aayush_person_track && DUR=60 SOURCE=videohub-nv12 TAG=hw EXTRA=--hw-resize scripts/run_live.sh"
+g1_ssh "cd ~/aayush_person_track && DUR=60 SOURCE=videohub-nv12 ENGINE=models/yolo26n_640x384.fp16.lean.engine TAG=hw_lean EXTRA=--hw-resize scripts/run_live.sh"
+g1_ssh "cd ~/aayush_person_track && DUR=60 SOURCE=videohub-nv12 ENGINE=models/yolo26n_416x256.fp16.lean.engine TAG=hw_lean_416 EXTRA=--hw-resize scripts/run_live.sh"
+g1_ssh "cd ~/aayush_person_track && DUR=60 SOURCE=videohub-nv12 ENGINE=models/yolo26n_640x384.fp16.dla0.engine TAG=hw_dla EXTRA=--hw-resize scripts/run_live.sh"
+```
+Compare GPU %, CPU %, RAM and power (tegrastats table) and the target columns against the `lab` run. Pick the
+smallest input whose `logs/agreement.md` row stays near 100% "same person & place" on the clip; `--every 2`
+halves everything again if 7.5 results per second are enough for the robot.
+`--hw-resize` makes the VIC scale 1280x720 to the model's picture size (640x360 for 640-wide inputs) before the
+frame leaves GStreamer: the CPU and the copy to the GPU handle a quarter of the pixels. It assumes the stream
+is 1280x720 (step 4 shows the real size; otherwise pass `--width/--height`).
 
 ## 6. Results back to the laptop
 

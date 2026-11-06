@@ -24,9 +24,16 @@ const char* kVideohubPrefix =
 
 // After the decoder. BGR = the lab's exact tail (videoconvert does BGRx -> BGR on the CPU).
 // NV12 = the decoder's own format, copied out by nvvidconv (VIC hardware), no CPU conversion.
-std::string tail(bool nv12, bool live) {
+// Scaled (out_w > 0) = NV12 resized by the VIC to out_w x out_h on the way out (no extra pass);
+// `interp` = nvvidconv interpolation-method (1 = bilinear; empty = nvvidconv's default filter).
+std::string tail(bool nv12, bool live, int out_w, int out_h, const std::string& interp) {
     const std::string sink = live ? "appsink drop=true max-buffers=1 sync=false"
                                   : "appsink drop=false max-buffers=4 sync=false";
+    if (out_w > 0) {
+        const std::string conv = interp.empty() ? " ! nvvidconv" : " ! nvvidconv interpolation-method=" + interp;
+        return conv + " ! video/x-raw,format=NV12,width=" + std::to_string(out_w) + ",height=" +
+               std::to_string(out_h) + " ! " + sink;
+    }
     if (nv12) return " ! nvvidconv ! video/x-raw,format=NV12 ! " + sink;
     return " ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! video/x-raw,format=BGR ! " + sink;
 }
@@ -43,25 +50,36 @@ bool ends_with(const std::string& s, const char* suffix) {
 
 }  // namespace
 
-Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()) {
+Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()), every_(cfg.every > 1 ? cfg.every : 1) {
     const std::string& src = cfg.source;
     const std::string dec = cfg.dec_opts.empty() ? "" : " " + cfg.dec_opts;
+    const bool scaled = cfg.out_w > 0 && cfg.out_h > 0;
+    const std::string scaled_desc =
+        scaled ? ", VIC-scaled to " + std::to_string(cfg.out_w) + "x" + std::to_string(cfg.out_h) : "";
+    // GStreamer source ending in the hardware decoder, then one of the tails above
+    auto open_gst = [&](const std::string& head, bool nv12, bool live) {
+        std::string pipe = head + tail(nv12, live, scaled ? cfg.out_w : 0, cfg.out_h, "1");
+        std::fprintf(stderr, "[camera] pipeline: %s\n", pipe.c_str());
+        bool opened = cap_->open(pipe, cv::CAP_GSTREAMER);
+        if (!opened && scaled) {  // nvvidconv without interpolation-method: its default filter
+            pipe = head + tail(nv12, live, cfg.out_w, cfg.out_h, "");
+            std::fprintf(stderr, "[camera] retrying with nvvidconv's default filter: %s\n", pipe.c_str());
+            opened = cap_->open(pipe, cv::CAP_GSTREAMER);
+        }
+        hw_resized_ = opened && scaled;
+        return opened;
+    };
     bool ok = false;
     if (src == "videohub" || src == "videohub-bgr" || src == "videohub-nv12") {
-        const bool nv12 = src == "videohub-nv12";
-        const std::string pipe = kVideohubPrefix + dec + tail(nv12, true);
-        desc_ = std::string("videohub stream rtp://230.1.1.1:1720 (") + (nv12 ? "NV12" : "BGR") + ")";
+        const bool nv12 = src == "videohub-nv12" || scaled;
+        desc_ = std::string("videohub stream rtp://230.1.1.1:1720 (") + (nv12 ? "NV12" : "BGR") + scaled_desc + ")";
         live_ = true;
-        std::fprintf(stderr, "[camera] pipeline: %s\n", pipe.c_str());
-        ok = cap_->open(pipe, cv::CAP_GSTREAMER);
+        ok = open_gst(kVideohubPrefix + dec, nv12, true);
     } else if (ends_with(src, ".h264") || ends_with(src, ".264")) {
-        const bool nv12 = cfg.format != "bgr";
-        const std::string pipe =
-            "filesrc location=\"" + src + "\" ! h264parse ! nvv4l2decoder" + dec + tail(nv12, false);
-        desc_ = "H.264 file " + src + (nv12 ? " (NV12)" : " (BGR)");
+        const bool nv12 = cfg.format != "bgr" || scaled;
+        desc_ = "H.264 file " + src + (nv12 ? " (NV12" : " (BGR") + scaled_desc + ")";
         live_ = false;
-        std::fprintf(stderr, "[camera] pipeline: %s\n", pipe.c_str());
-        ok = cap_->open(pipe, cv::CAP_GSTREAMER);
+        ok = open_gst("filesrc location=\"" + src + "\" ! h264parse ! nvv4l2decoder" + dec, nv12, false);
     } else if (src.rfind("/dev/video", 0) == 0) {
         // Option B. Only possible after videohub_pc4 releases the device -- never done by this program.
         desc_ = "V4L2 " + src;
@@ -84,6 +102,8 @@ Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()) {
         live_ = false;
         ok = cap_->open(src);
     }
+    if (scaled && !hw_resized_ && ok)
+        std::fprintf(stderr, "[camera] hardware resize only works for videohub / .h264 sources; full-size frames\n");
     if (!ok)
         die("cannot open " + desc_ +
             "\n  videohub: is videohub_pc4 running, and was OpenCV built with GStreamer?"
@@ -122,8 +142,11 @@ Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()) {
     ready_.push_back(0);
     frames_read_ = 1;
 
-    std::fprintf(stderr, "[camera] %s: %dx%d %s, %s\n", desc_.c_str(), w_, h_, fmt_ == PixelFormat::NV12 ? "NV12" : "BGR",
-                 live_ ? "live (newest frame wins)" : "file (every frame)");
+    if (hw_resized_ && (w_ != cfg.out_w || h_ != cfg.out_h))
+        std::fprintf(stderr, "[camera] asked the VIC for %dx%d, got %dx%d\n", cfg.out_w, cfg.out_h, w_, h_);
+    std::fprintf(stderr, "[camera] %s: %dx%d %s, %s%s\n", desc_.c_str(), w_, h_, fmt_ == PixelFormat::NV12 ? "NV12" : "BGR",
+                 live_ ? "live (newest frame wins)" : "file (every frame)",
+                 every_ > 1 ? (", 1 of every " + std::to_string(every_) + " frames").c_str() : "");
     thread_ = std::thread(&Camera::loop, this);
 }
 
@@ -158,6 +181,20 @@ void Camera::loop() {
     int n_win = 0;
     uint64_t seq = 1;
     while (running_) {
+        // --every N: pull the next N-1 source frames without copying them anywhere
+        bool skipped_ok = true;
+        for (int k = 1; k < every_ && running_ && skipped_ok; ++k) {
+            skipped_ok = cap_->grab();
+            if (skipped_ok) {
+                ++frames_skipped_;
+                ++n_win;
+            }
+        }
+        if (!skipped_ok) {
+            if (live_) std::fprintf(stderr, "[camera] stream ended or read failed\n");
+            break;
+        }
+        if (!running_) break;
         int s = -1;
         {
             std::unique_lock<std::mutex> lk(m_);

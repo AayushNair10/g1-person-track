@@ -58,6 +58,19 @@ inline Letterbox make_letterbox(int src_w, int src_h, int dst_w, int dst_h) {
     return lb;
 }
 
+// Box mapping back to camera pixels when the frame given to the letterbox was already scaled down from
+// the camera's cam_w x cam_h (hardware resize): same picture placement inside the model input, gains
+// relative to the camera size. With cam == frame size this returns lb unchanged.
+inline Letterbox for_camera(Letterbox lb, int cam_w, int cam_h) {
+    lb.gain_x = static_cast<float>(static_cast<double>(lb.new_w) / cam_w);
+    lb.gain_y = static_cast<float>(static_cast<double>(lb.new_h) / cam_h);
+    lb.src_w = cam_w;
+    lb.src_h = cam_h;
+    lb.scale_x = static_cast<float>(static_cast<double>(cam_w) / lb.new_w);
+    lb.scale_y = static_cast<float>(static_cast<double>(cam_h) / lb.new_h);
+    return lb;
+}
+
 // Source sample positions for one output coordinate (cv::resize INTER_LINEAR, edge clamped).
 struct Tap {
     int i0, i1;

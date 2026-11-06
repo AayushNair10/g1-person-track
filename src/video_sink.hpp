@@ -29,7 +29,9 @@ struct Overlay {
 
 class VideoSink {
 public:
-    VideoSink(const std::string& path, int w, int h, PixelFormat fmt, double fps, double seconds);
+    // box_scale: frame pixels per camera pixel (boxes are in camera pixels; < 1 after a hardware resize)
+    VideoSink(const std::string& path, int w, int h, PixelFormat fmt, double fps, double seconds,
+              float box_scale = 1.f);
     ~VideoSink();  // writes what is queued, closes the file
     VideoSink(const VideoSink&) = delete;
     VideoSink& operator=(const VideoSink&) = delete;
@@ -48,6 +50,7 @@ private:
     std::string path_;
     int w_, h_;
     PixelFormat fmt_;
+    float box_scale_;
     bool ok_ = false;
     int max_frames_ = 0, pushed_ = 0, dropped_ = 0;
     cv::VideoWriter writer_;

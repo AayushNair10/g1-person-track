@@ -9,6 +9,9 @@ Ultralytics/OpenCV (yolo_ref) and ONNX Runtime.
      cv2.cvtColor(NV12 -> BGR) + the same (NV12 frames); differences in 8-bit grey levels
   2. decoding: ONNX Runtime output -> C++ Decoder vs yolo_ref decode + un-letterbox (both heads)
   3. end to end: detections from the C++ tensor vs from the Ultralytics-style tensor
+  4. --hw-resize: the NV12 frame scaled down first (as the VIC does; simulated with a box filter and with
+     plain bilinear), letterboxed at scale 1, boxes mapped back to camera pixels (for_camera), vs the
+     full-size NV12 path; and for_camera() with an unscaled frame must change nothing
 """
 import argparse
 import os
@@ -35,6 +38,14 @@ def bgr_to_nv12(f):
     return np.concatenate([y, uv]).reshape(h * 3 // 2, w)
 
 
+def scale_nv12(nv12, w, h, fw, fh, interp):
+    """NV12 w x h -> fw x fh, each plane on its own (what a hardware scaler does with NV12)."""
+    y = cv2.resize(nv12[:h], (fw, fh), interpolation=interp)
+    uv = nv12[h:].reshape(h // 2, w // 2, 2)
+    uv = cv2.resize(uv, (fw // 2, fh // 2), interpolation=interp)
+    return np.concatenate([y, uv.reshape(fh // 2, fw)])
+
+
 def cpp_pre(binary, work, img, fmt, dw, dh):
     raw, out = work / "frame.raw", work / "tensor.f32"
     img.tofile(raw)
@@ -45,11 +56,11 @@ def cpp_pre(binary, work, img, fmt, dw, dh):
     return np.fromfile(out, np.float32).reshape(1, 3, dh, dw)
 
 
-def cpp_post(binary, work, out, w, h, dw, dh, conf):
+def cpp_post(binary, work, out, w, h, dw, dh, conf, frame=None):
     o, d = work / "out.f32", work / "dets.txt"
     out.astype(np.float32).tofile(o)
     subprocess.run([str(binary), "post", str(o), *map(str, out.shape), str(w), str(h), str(dw), str(dh), str(conf),
-                    str(d)], check=True)
+                    str(d), *([str(frame[0]), str(frame[1])] if frame else [])], check=True)
     txt = d.read_text().strip()
     return np.array([list(map(float, ln.split())) for ln in txt.split("\n")]) if txt else np.zeros((0, 5))
 
@@ -124,6 +135,37 @@ def main():
         print(f"   {model:22s} decode: {dec_n} boxes, frames differing {dec_bad}, min IoU {min(dec_iou, default=1):.6f}, "
               f"max dconf {dconf:.1e} {'OK' if good else 'FAIL'} | end-to-end: frames differing {e2e_bad}, "
               f"mean IoU {np.mean(e2e_iou) if e2e_iou else 1:.5f}")
+    print("4. --hw-resize (VIC scaling simulated) vs the full-size NV12 path, NMS-free head")
+    for model in ["yolo26n_640x384", "yolo26n_416x256", "yolo26n_320x192"]:
+        sess = ort.InferenceSession(str(ROOT / "models" / f"{model}.onnx"), providers=["CPUExecutionProvider"])
+        inp = sess.get_inputs()[0]
+        dh, dw = inp.shape[2], inp.shape[3]
+        for name, interp in (("box filter", cv2.INTER_AREA), ("bilinear", cv2.INTER_LINEAR)):
+            ref_all, got_all, same_map = [], [], True
+            for f in frames:
+                h, w = f.shape[:2]
+                nv = bgr_to_nv12(f)
+                out = sess.run(None, {inp.name: cpp_pre(args.bin, work, nv, "nv12", dw, dh)})[0]
+                ref = cpp_post(args.bin, work, out, w, h, dw, dh, args.conf)
+                same = cpp_post(args.bin, work, out, w, h, dw, dh, args.conf, frame=(w, h))
+                same_map &= ref.shape == same.shape and bool(np.array_equal(ref, same))
+                r = min(dw / w, dh / h)
+                fw, fh = int(round(w * r)) & ~1, int(round(h * r)) & ~1
+                small = scale_nv12(nv, w, h, fw, fh, interp)
+                out2 = sess.run(None, {inp.name: cpp_pre(args.bin, work, small, "nv12", dw, dh)})[0]
+                got_all.append(cpp_post(args.bin, work, out2, w, h, dw, dh, args.conf, frame=(fw, fh)))
+                ref_all.append(ref)
+            n_ref = sum(len(x) for x in ref_all)
+            n_got = sum(len(x) for x in got_all)
+            ms = [R.match(a, b, 0.5) for a, b in zip(ref_all, got_all)]
+            ious = [m[2] for mm in ms for m in mm]
+            top_iou = [R.match(a[:1], b[:1], 0.0)[0][2] if len(a) and len(b) else 0.0
+                       for a, b in zip(ref_all, got_all) if len(a)]
+            good = same_map and (not ref_all or np.mean(top_iou) > 0.9)
+            ok &= good
+            print(f"   {model:16s} {fw}x{fh} {name:10s}: boxes {n_ref} -> {n_got}, matched {len(ious)}, "
+                  f"mean IoU {np.mean(ious) if ious else 0:.4f}, top-box IoU mean {np.mean(top_iou):.4f} "
+                  f"min {np.min(top_iou):.4f}; unscaled mapping unchanged: {same_map}  {'OK' if good else 'FAIL'}")
     print("ALL OK" if ok else "SOME CHECKS FAILED")
     sys.exit(0 if ok else 1)
 

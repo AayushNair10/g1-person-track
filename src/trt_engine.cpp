@@ -31,7 +31,7 @@ Logger& logger() {
 
 }  // namespace
 
-TrtEngine::TrtEngine(const std::string& engine_path, cudaStream_t stream, bool use_cuda_graph)
+TrtEngine::TrtEngine(const std::string& engine_path, cudaStream_t stream, bool use_cuda_graph, int dla_core)
     : path_(engine_path), stream_(stream), use_graph_(use_cuda_graph) {
     std::ifstream f(engine_path, std::ios::binary);
     if (!f) die(path_, "cannot open the engine file (build it with scripts/build_engines.sh)");
@@ -39,6 +39,10 @@ TrtEngine::TrtEngine(const std::string& engine_path, cudaStream_t stream, bool u
 
     runtime_ = nvinfer1::createInferRuntime(logger());
     if (!runtime_) die(path_, "createInferRuntime failed");
+    if (dla_core >= 0) {
+        if (dla_core >= runtime_->getNbDLACores()) die(path_, "this device has no such DLA core");
+        runtime_->setDLACore(dla_core);
+    }
     engine_ = runtime_->deserializeCudaEngine(blob.data(), blob.size());
     if (!engine_) die(path_, "cannot deserialize (engine built by another TensorRT version or device?)");
     context_ = engine_->createExecutionContext();

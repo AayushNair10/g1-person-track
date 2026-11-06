@@ -46,8 +46,8 @@ struct Args {
     long max_frames = 0;
     int warmup = 15;
     float conf = 0.25f, iou = 0.7f, relock_iou = 0.3f;
-    bool graph = true, zero_copy = false, quiet = false;
-    int print_every = 1;
+    bool graph = true, zero_copy = false, quiet = false, hw_resize = false;
+    int print_every = 1, every = 1, dla = -1;
     int width = 1280, height = 720, fps = 15;
 };
 
@@ -58,6 +58,11 @@ void usage(const char* prog) {
         "  --source SRC        videohub | videohub-nv12 | FILE.h264 | FILE.mp4 | /dev/videoN | 'gst pipeline ! appsink'\n"
         "                      (default videohub = the lab's tested head-camera stream pipeline)\n"
         "  --format bgr|nv12   pixel format for .h264 files (default nv12)\n"
+        "  --hw-resize         videohub / .h264: the VIC (nvvidconv) scales frames to the model's picture size\n"
+        "                      and hands over NV12 (e.g. 640x360 instead of 1280x720); boxes stay in camera pixels\n"
+        "  --every N           process 1 of every N frames (others are skipped uncopied; default 1)\n"
+        "  --dla N             run the engine on DLA core N (engines built with DLA=N scripts/build_engines.sh;\n"
+        "                      default: taken from a '.dlaN.' in the engine file name)\n"
         "  --dec-opts STR      extra nvv4l2decoder properties, e.g. 'enable-max-performance=1 disable-dpb=1'\n"
         "  --conf F            person score threshold (default 0.25, kept if score > F)\n"
         "  --iou F             NMS IoU for raw-head models (default 0.7)\n"
@@ -74,7 +79,8 @@ void usage(const char* prog) {
         "  --zero-copy         let the GPU read the pinned frame directly instead of copying it first\n"
         "  --print-every N     print every Nth frame to stdout (default 1)\n"
         "  --quiet             no per-frame lines on stdout\n"
-        "  --width/--height/--fps  only for /dev/videoN\n",
+        "  --width/--height    camera size (default 1280x720: the videohub stream; /dev/videoN: requested size)\n"
+        "  --fps N             only for /dev/videoN\n",
         prog);
 }
 
@@ -94,6 +100,9 @@ bool parse(int argc, char** argv, Args& a) {
         } else if (k == "--engine") a.engine = val();
         else if (k == "--source") a.source = val();
         else if (k == "--format") a.format = val();
+        else if (k == "--hw-resize") a.hw_resize = true;
+        else if (k == "--every") a.every = std::max(1, std::stoi(val()));
+        else if (k == "--dla") a.dla = std::stoi(val());
         else if (k == "--dec-opts") a.dec_opts = val();
         else if (k == "--conf") a.conf = std::stof(val());
         else if (k == "--iou") a.iou = std::stof(val());
@@ -128,6 +137,15 @@ double rss_mb() {  // resident memory of this process (Linux)
     while (std::getline(f, line))
         if (line.rfind("VmRSS:", 0) == 0) return std::atof(line.c_str() + 6) / 1024.0;
     return -1.0;
+}
+
+// DLA core from an engine file name like models/yolo26n_640x384.fp16.dla0.engine (-1 = GPU)
+int dla_from_name(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    const std::string base = slash == std::string::npos ? path : path.substr(slash + 1);
+    const size_t p = base.find(".dla");
+    if (p == std::string::npos || p + 4 >= base.size() || base[p + 4] < '0' || base[p + 4] > '9') return -1;
+    return base[p + 4] - '0';
 }
 
 const char* head_name(pt::Head h) { return h == pt::Head::NmsFree ? "NMS-free (1x300x6)" : "raw + C++ NMS"; }
@@ -183,6 +201,13 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
+    // engine first: with --hw-resize the camera is asked for the model's picture size
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    const int dla = a.dla >= 0 ? a.dla : dla_from_name(a.engine);
+    pt::TrtEngine eng(a.engine, stream, a.graph, dla);
+    const pt::OutputLayout layout = layout_of(eng);
+
     pt::CameraConfig cc;
     cc.source = a.source;
     cc.format = a.format;
@@ -190,29 +215,37 @@ int main(int argc, char** argv) {
     cc.width = a.width;
     cc.height = a.height;
     cc.fps = a.fps;
+    cc.every = a.every;
+    if (a.hw_resize) {  // the picture inside the letterbox, at the camera's aspect ratio (even sizes for NV12)
+        const pt::Letterbox at_cam = pt::make_letterbox(a.width, a.height, eng.input_w(), eng.input_h());
+        cc.out_w = at_cam.new_w & ~1;
+        cc.out_h = at_cam.new_h & ~1;
+    }
     pt::Camera cam(cc);
+    // camera size: the frames' own size, or the stream's full size when the VIC scaled them
+    const int cam_w = cam.hw_resized() ? a.width : cam.width(), cam_h = cam.hw_resized() ? a.height : cam.height();
 
-    cudaStream_t stream;
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    pt::TrtEngine eng(a.engine, stream, a.graph);
-    const pt::OutputLayout layout = layout_of(eng);
     const pt::Letterbox lb = pt::make_letterbox(cam.width(), cam.height(), eng.input_w(), eng.input_h());
-    pt::Decoder dec(layout, lb, a.conf, a.iou);
-    std::fprintf(stderr, "[app] engine %s: input %dx%d, output %s, CUDA graph %s, frame copy %s\n", a.engine.c_str(),
-                 eng.input_w(), eng.input_h(), head_name(layout.head), a.graph ? "on" : "off",
+    const pt::Letterbox lb_box = pt::for_camera(lb, cam_w, cam_h);  // boxes back to camera pixels
+    pt::Decoder dec(layout, lb_box, a.conf, a.iou);
+    std::fprintf(stderr, "[app] engine %s: input %dx%d, output %s, %s, CUDA graph %s, frame copy %s\n",
+                 a.engine.c_str(), eng.input_w(), eng.input_h(), head_name(layout.head),
+                 dla >= 0 ? ("DLA core " + std::to_string(dla)).c_str() : "GPU", a.graph ? "on" : "off",
                  a.zero_copy ? "zero-copy" : "explicit");
-    std::fprintf(stderr, "[app] letterbox %dx%d -> %dx%d at (%d, %d)\n", cam.width(), cam.height(), lb.new_w, lb.new_h,
-                 lb.left, lb.top);
+    std::fprintf(stderr, "[app] letterbox %dx%d -> %dx%d at (%d, %d)%s\n", cam.width(), cam.height(), lb.new_w,
+                 lb.new_h, lb.left, lb.top,
+                 cam.hw_resized() ? (", boxes in camera pixels " + std::to_string(cam_w) + "x" + std::to_string(cam_h)).c_str()
+                                  : "");
 
     std::unique_ptr<pt::TrtEngine> eng2;
     std::unique_ptr<pt::Decoder> dec2;
     if (!a.compare.empty()) {
-        eng2.reset(new pt::TrtEngine(a.compare, stream, a.graph));
+        eng2.reset(new pt::TrtEngine(a.compare, stream, a.graph, dla_from_name(a.compare)));
         if (eng2->input_w() != eng.input_w() || eng2->input_h() != eng.input_h()) {
             std::fprintf(stderr, "--compare engine must have the same input size\n");
             return 2;
         }
-        dec2.reset(new pt::Decoder(layout_of(*eng2), lb, a.conf, a.iou));
+        dec2.reset(new pt::Decoder(layout_of(*eng2), lb_box, a.conf, a.iou));
         std::fprintf(stderr, "[app] comparing with %s on every frame\n", a.compare.c_str());
     }
 
@@ -222,9 +255,13 @@ int main(int argc, char** argv) {
     cudaEvent_t ev[5];
     for (auto& e : ev) CUDA_CHECK(cudaEventCreate(&e));
 
-    pt::OCSort tracker;
+    // --every N: same memory in seconds for lost tracks and for the target
+    pt::OCSortConfig oc;
+    oc.track_buffer = std::max(1, (oc.track_buffer + a.every / 2) / a.every);
+    pt::OCSort tracker(oc);
     pt::TargetConfig tc;
     tc.relock_min_iou = a.relock_iou;
+    tc.reacquire_after = std::max(1, (tc.reacquire_after + a.every / 2) / a.every);
     pt::TargetSelector target(tc);
 
     std::FILE* csv = nullptr;
@@ -244,7 +281,8 @@ int main(int argc, char** argv) {
     std::unique_ptr<pt::VideoSink> sink;
     if (!a.save_video.empty())
         sink.reset(new pt::VideoSink(a.save_video, cam.width(), cam.height(), cam.format(),
-                                     cam.source_fps() > 0 ? cam.source_fps() : 15.0, a.save_seconds));
+                                     (cam.source_fps() > 0 ? cam.source_fps() : 15.0) / a.every, a.save_seconds,
+                                     static_cast<float>(cam.width()) / static_cast<float>(cam_w)));
 
     std::vector<double> s_wait, s_upload, s_pre, s_infer, s_post, s_track, s_total, s_gpu_wall;
     std::vector<pt::Det> dets, dets2;
@@ -410,10 +448,13 @@ int main(int argc, char** argv) {
         md += buf;
     };
     add("## person_track run%s%s\n\n", a.label.empty() ? "" : ": ", a.label.c_str());
-    add("- engine `%s` (input %dx%d, %s, CUDA graph %s, frame copy %s)\n", a.engine.c_str(), eng.input_w(),
-        eng.input_h(), head_name(layout.head), eng.graph_active() ? "on" : "off", a.zero_copy ? "zero-copy" : "explicit");
-    add("- source %s, %dx%d %s\n", cam.description().c_str(), cam.width(), cam.height(),
-        cam.format() == pt::PixelFormat::NV12 ? "NV12" : "BGR");
+    const std::string where = dla >= 0 ? "DLA core " + std::to_string(dla) : "GPU";
+    add("- engine `%s` (input %dx%d, %s, %s, CUDA graph %s, frame copy %s)\n", a.engine.c_str(), eng.input_w(),
+        eng.input_h(), head_name(layout.head), where.c_str(), eng.graph_active() ? "on" : "off",
+        a.zero_copy ? "zero-copy" : "explicit");
+    add("- source %s, frames %dx%d %s%s, 1 of every %d processed\n", cam.description().c_str(), cam.width(),
+        cam.height(), cam.format() == pt::PixelFormat::NV12 ? "NV12" : "BGR",
+        cam.hw_resized() ? " (hardware resize; boxes in camera pixels)" : "", a.every);
     add("- frames processed %ld (statistics over %ld after %d warm-up), %.1f s\n", frames, counted, a.warmup,
         pt::now_s() - t_start);
     const unsigned long long n_read = cam.frames_read() - read_base, n_drop = cam.frames_dropped() - drop_base;
@@ -462,6 +503,8 @@ int main(int argc, char** argv) {
                          head_name(layout.head));
             std::fprintf(f, "\"cuda_graph\":%s,\"zero_copy\":%s,\"frames\":%ld,\"counted\":%ld,\"fps\":%.3f,",
                          eng.graph_active() ? "true" : "false", a.zero_copy ? "true" : "false", frames, counted, fps);
+            std::fprintf(f, "\"frame_size\":\"%dx%d\",\"hw_resize\":%s,\"every\":%d,\"dla\":%d,", cam.width(),
+                         cam.height(), cam.hw_resized() ? "true" : "false", a.every, dla);
             std::fprintf(f, "\"frames_read\":%llu,\"dropped\":%llu,\"gaps\":%llu,\"with_target\":%ld,\"without_target\":%ld,",
                          n_read, n_drop, static_cast<unsigned long long>(gaps),
                          with_target, without_target);

@@ -1,6 +1,7 @@
 // A TensorRT 8.5 engine (built by trtexec on the robot) with one float input and one float output.
 // Uses the TensorRT 8.5 binding API (getBindingName, enqueueV2). The inference can be recorded once as
 // a CUDA graph and replayed every frame, which removes most kernel-launch work from the CPU.
+// Engines built for a DLA core (trtexec --useDLACore=N --allowGPUFallback) need dla_core = N.
 #pragma once
 
 #include <NvInfer.h>
@@ -20,7 +21,7 @@ struct Tensor {
 
 class TrtEngine {
 public:
-    TrtEngine(const std::string& engine_path, cudaStream_t stream, bool use_cuda_graph);
+    TrtEngine(const std::string& engine_path, cudaStream_t stream, bool use_cuda_graph, int dla_core = -1);
     ~TrtEngine();
     TrtEngine(const TrtEngine&) = delete;
     TrtEngine& operator=(const TrtEngine&) = delete;

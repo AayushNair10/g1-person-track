@@ -2,6 +2,8 @@
 // letterbox_pixel() per pixel). Used by check_pipeline.py.
 //   test_pipeline pre  <frame.raw> <w> <h> <bgr|nv12> <dst_w> <dst_h> <tensor_out.f32>
 //   test_pipeline post <output.f32> <d0> <d1> <d2> <src_w> <src_h> <dst_w> <dst_h> <conf> <dets_out.txt>
+//                      [<frame_w> <frame_h>]   frame given to the letterbox was hardware-resized from src_w x src_h
+//                                              (main.cpp's --hw-resize mapping: for_camera)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -50,8 +52,12 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "unknown output layout\n");
             return 2;
         }
+        const int src_w = std::atoi(argv[6]), src_h = std::atoi(argv[7]), dst_w = std::atoi(argv[8]),
+                  dst_h = std::atoi(argv[9]);
         const pt::Letterbox lb =
-            pt::make_letterbox(std::atoi(argv[6]), std::atoi(argv[7]), std::atoi(argv[8]), std::atoi(argv[9]));
+            argc >= 14 ? pt::for_camera(pt::make_letterbox(std::atoi(argv[12]), std::atoi(argv[13]), dst_w, dst_h),
+                                        src_w, src_h)
+                       : pt::make_letterbox(src_w, src_h, dst_w, dst_h);
         pt::Decoder dec(layout, lb, static_cast<float>(std::atof(argv[10])));
         std::vector<pt::Det> dets;
         dec.decode(reinterpret_cast<const float*>(raw.data()), dets);
