@@ -84,8 +84,7 @@ void usage(const char* prog) {
         "  --quiet             no per-frame lines on stdout\n"
         "  --width/--height    /dev/videoN: mode to ask for (default 640x360 = the 640x384 model's picture size);\n"
         "                      videohub: the stream's size (default 1280x720); files: read from the file\n"
-        "  --fps N             /dev/videoN: frame rate to ask for (default 60; the D435i colour sensor does 60\n"
-        "                      up to 960x540, 30 at 1280x720 and 1920x1080)\n",
+        "  --fps N             /dev/videoN: frame rate to ask for (default 30)\n",
         prog);
 }
 
@@ -141,7 +140,7 @@ bool parse(int argc, char** argv, Args& a) {
 void resolve_camera_mode(Args& a) {
     const bool direct = a.source.rfind("/dev/video", 0) == 0;
     const bool hub = a.source.rfind("videohub", 0) == 0;
-    if (a.fps <= 0) a.fps = direct ? 60 : 15;
+    if (a.fps <= 0) a.fps = direct ? 30 : 15;
     if (a.width > 0 && a.height > 0) return;
     if (direct) {
         a.width = 640;

@@ -6,7 +6,7 @@ is followed. Its box and ID are printed every frame. Lightweight first: C++ only
 (CUDA 11.4, TensorRT 8.5.2, OpenCV 4.2 and GStreamer are already there).
 
 ```
-head camera, RealSense D435i colour sensor read directly (/dev/video4, YUYV 640x360 @ 60 FPS; "Option B":
+head camera, RealSense D435i colour sensor read directly (/dev/video4, YUYV 640x360 @ 30 FPS; "Option B":
   Unitree's videohub_pc4 is stopped by hand first)
   -> camera thread (newest frame wins), frames straight into pinned memory
   -> one CUDA kernel: letterbox 640x360 -> 640x384, BGR/NV12 -> RGB, /255, CHW, into the TensorRT input
@@ -153,8 +153,8 @@ keeping every frame and cutting the delay from frame arrival to result. Done:
   (the last one raises the decoder clock: lower latency, slightly more power)
 
 `scripts/run_offline.sh` measures the pipeline's maximum rate without the camera limit. Going above 15 FPS live
-needs Option B: the RealSense colour sensor read directly, up to 60 FPS, after `videohub_pc4` has been stopped by
-hand (the program never stops it). `--source /dev/video4 --width 640 --height 360 --fps 60` (OpenCV V4L2, as the
+needs Option B: the RealSense colour sensor read directly, at 30 FPS, after `videohub_pc4` has been stopped by
+hand (the program never stops it). `--source /dev/video4 --width 640 --height 360 --fps 30` (OpenCV V4L2, as the
 lab guide says) or add `--format nv12` (GStreamer `v4l2src`, the VIC converts YUYV -> NV12). Steps:
 [docs/RUNBOOK.md](docs/RUNBOOK.md) section 7.
 
@@ -185,9 +185,9 @@ docs/                RUNBOOK.md (robot day), RESULTS.md (after the robot runs)
 On the robot (after `scripts/deploy.sh all`, `scripts/build_engines.sh`, `make -j4`):
 
 ```bash
-build/person_track                                   # default engine, /dev/video4 at 640x360 @ 60 FPS (Option B)
+build/person_track                                   # default engine, /dev/video4 at 640x360 @ 30 FPS (Option B)
 build/person_track --format nv12                     # same, the VIC converts YUYV -> NV12 (no CPU colour conversion)
-build/person_track --width 848 --height 480          # another camera mode (60 FPS up to 960x540)
+build/person_track --width 848 --height 480          # another camera mode
 TAG=walk NOTE="2 m, walking" scripts/run_live.sh    # logged 120 s run -> runs/<NNN>_walk/
 build/person_track --source frames/clip1.h264 --compare models/yolo26n_640x384.fp32.engine --quiet
 build/person_track --save-video logs/demo.mp4 --save-seconds 30 --duration 30

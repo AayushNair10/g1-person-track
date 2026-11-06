@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # On the robot: record the head camera (Option B: /dev/video4 directly, videohub_pc4 stopped by hand) to an
 # H.264 file with the Jetson's hardware encoder, for offline tests on identical frames (run_offline.sh).
-#   scripts/record_clip.sh 60 frames/clip_walk.h264            60 s at 640x360 @ 60 FPS
+#   scripts/record_clip.sh 60 frames/clip_walk.h264            60 s at 640x360 @ 30 FPS
 #   W=1280 H=720 FPS=30 scripts/record_clip.sh 60 frames/clip_720p.h264
 # Play back with: build/person_track --source frames/clip_walk.h264 ...  (the app cannot run at the same time:
 # the camera serves one program)
@@ -12,7 +12,7 @@ OUT=${2:-frames/clip_$(date +%H%M%S).h264}
 DEV=${DEV:-/dev/video4}
 W=${W:-640}
 H=${H:-360}
-FPS=${FPS:-60}
+FPS=${FPS:-30}
 BITRATE=${BITRATE:-8000000}
 if pgrep -f videohub_pc4 >/dev/null; then
     echo "videohub_pc4 is running and holds the camera. Stop it first: sudo pkill -f videohub_pc4"

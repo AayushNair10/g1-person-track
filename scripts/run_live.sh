@@ -2,7 +2,7 @@
 # Phase 5b (on the robot): a live run on the head camera, with everything it measures kept in its own
 # folder runs/<NNN>_<TAG>/ for later comparison (scripts/analyze_runs.py).
 # Option B (default source /dev/video4): stop videohub_pc4 by hand first (docs/RUNBOOK.md section 7).
-#   scripts/run_live.sh                                        120 s, default engine, 640x360 @ 60 FPS
+#   scripts/run_live.sh                                        120 s, default engine, 640x360 @ 30 FPS
 #   TAG=walk NOTE="2 m, walking left/right, lights on" scripts/run_live.sh
 #   DUR=60 ENGINE=models/yolo26n_416x256.fp16.engine TAG=416 scripts/run_live.sh
 #   VIDEO=30 scripts/run_live.sh                               also save the first 30 s as an annotated MP4

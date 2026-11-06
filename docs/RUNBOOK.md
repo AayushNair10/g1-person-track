@@ -82,11 +82,11 @@ Steps 5 + 6 in one line, the way the FaceHandTrack demo is started (`;`, not `&&
 ```bash
 cd ~/aayush_person_track && sudo pkill -f videohub_pc4; sleep 2; build/person_track --print-every 60
 ```
-Defaults: `/dev/video4`, 640x360 @ 60 FPS (exactly the picture inside the 640x384 model input), the default
-engine. Look for `driver reports 640x360 @ 60.0 FPS, format YUYV`. One line per second:
+Defaults: `/dev/video4`, 640x360 @ 30 FPS (exactly the picture inside the 640x384 model input), the default
+engine. Look for `driver reports 640x360 @ 30.0 FPS, format YUYV`. One line per second:
 `frame,timestamp,target_id,x1,y1,x2,y2,conf,n_persons,...` (`target_id` -1 = nobody; box in 640x360 pixels).
-Ctrl+C prints the summary (results per second should be close to 60). Other mode if 640x360 is not offered:
-`--width 848 --height 480`. Below 60 FPS in a dim room = the camera's auto exposure: more light helps.
+Ctrl+C prints the summary (results per second should be close to 30). Other mode if 640x360 is not offered:
+`--width 848 --height 480`. Below 30 FPS in a dim room = the camera's auto exposure: more light helps.
 
 ## 7. Recorded clip and offline checks (Terminal 2, optional)
 
@@ -95,7 +95,7 @@ scripts/record_clip.sh 60 frames/clip1.h264          # walk around in front of t
 scripts/run_offline.sh frames/clip1.h264              # fp16 vs fp32, sizes, variants on identical frames
 python3 scripts/make_results.py                       # -> logs/RESULTS.md
 ```
-The clip is the camera (640x360 @ 60) encoded by the hardware encoder; the app and the recorder cannot use the
+The clip is the camera (640x360 @ 30) encoded by the hardware encoder; the app and the recorder cannot use the
 camera at the same time.
 
 ## 8. Logged live runs (Terminal 2)
@@ -105,7 +105,7 @@ run.txt, console.log, video.mp4 with `VIDEO=`). Write what you did in `NOTE` so 
 During each run: stand ~2 m away, walk left/right, turn around, crouch, leave the view ~5 s and come back, and if
 possible have a second person cross in front of you.
 ```bash
-TAG=base NOTE="640x360@60, default engine, walking" VIDEO=30 scripts/run_live.sh
+TAG=base NOTE="640x360@30, default engine, walking" VIDEO=30 scripts/run_live.sh
 TAG=nv12 NOTE="VIC colour conversion" EXTRA="--format nv12" scripts/run_live.sh
 TAG=416 NOTE="416x256 engine" ENGINE=models/yolo26n_416x256.fp16.engine scripts/run_live.sh
 TAG=lean416 ENGINE=models/yolo26n_416x256.fp16.lean.engine EXTRA="--hw-resize" scripts/run_live.sh
