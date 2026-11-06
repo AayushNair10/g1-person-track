@@ -76,6 +76,11 @@ If `videohub_pc4` comes back by itself, `master_service` restarts it: ask the la
 ```bash
 build/person_track --print-every 60
 ```
+Steps 5 + 6 in one line, the way the FaceHandTrack demo is started (`;`, not `&&`: `pkill -f` also matches the
+`sudo` command itself, so it can report failure although it worked):
+```bash
+cd ~/aayush_person_track && sudo pkill -f videohub_pc4; sleep 2; build/person_track --print-every 60
+```
 Defaults: `/dev/video4`, 640x360 @ 60 FPS (exactly the picture inside the 640x384 model input), the default
 engine. Look for `driver reports 640x360 @ 60.0 FPS, format YUYV`. One line per second:
 `frame,timestamp,target_id,x1,y1,x2,y2,conf,n_persons,...` (`target_id` -1 = nobody; box in 640x360 pixels).

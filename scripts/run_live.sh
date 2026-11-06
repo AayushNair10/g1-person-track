@@ -21,9 +21,12 @@ NOTE=${NOTE:-}
 EXTRA=${EXTRA:-}
 APP=build/person_track
 [ -x "$APP" ] || { echo "build first: make -j4"; exit 1; }
-if [[ "$SOURCE" == /dev/video* ]] && pgrep -f videohub_pc4 >/dev/null; then
-    echo "videohub_pc4 is running and holds the camera. Stop it first: sudo pkill -f videohub_pc4"
-    exit 1
+if [[ "$SOURCE" == /dev/video* ]]; then  # give a just-stopped videohub_pc4 a few seconds to let go of the camera
+    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f videohub_pc4 >/dev/null || break; sleep 0.5; done
+    if pgrep -f videohub_pc4 >/dev/null; then
+        echo "videohub_pc4 is running and holds the camera. Stop it first: sudo pkill -f videohub_pc4"
+        exit 1
+    fi
 fi
 
 mkdir -p runs
