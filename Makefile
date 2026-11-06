@@ -15,7 +15,7 @@ CXXFLAGS  := -std=c++17 -O3 -Wall -Wextra -Wno-deprecated-declarations -Wno-form
 NVCCFLAGS := -std=c++17 -O3 -arch=$(CUDA_ARCH) -Xcompiler -Wall
 LDLIBS    := -L$(CUDA)/lib64 -lnvinfer -lcudart $(OPENCV_LIBS) -lpthread
 
-SRCS := main.cpp trt_engine.cpp camera.cpp ocsort.cpp video_sink.cpp
+SRCS := main.cpp trt_engine.cpp camera.cpp ocsort.cpp video_sink.cpp live_view.cpp
 OBJS := $(addprefix build/,$(SRCS:.cpp=.o)) build/preprocess.o
 HDRS := $(wildcard src/*.hpp)
 

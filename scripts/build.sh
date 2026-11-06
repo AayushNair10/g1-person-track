@@ -12,7 +12,7 @@ echo "[1/2] CUDA kernel (nvcc)..."
 echo "[2/2] app (g++, about a minute)..."
 g++ -std=c++17 -O3 -Wall -Wextra -Wno-deprecated-declarations -Wno-format-truncation \
     -I"$CUDA/include" $(pkg-config --cflags opencv4) \
-    src/main.cpp src/trt_engine.cpp src/camera.cpp src/ocsort.cpp src/video_sink.cpp build/preprocess.o \
+    src/main.cpp src/trt_engine.cpp src/camera.cpp src/ocsort.cpp src/video_sink.cpp src/live_view.cpp build/preprocess.o \
     -o build/person_track \
     -L"$CUDA/lib64" -lnvinfer -lcudart $(pkg-config --libs opencv4) -lpthread
 echo "built build/person_track"

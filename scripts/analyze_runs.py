@@ -116,6 +116,7 @@ def row_of(r):
         "gpu_pct": ts_mean(r["ts"], "gpu"), "cpu_pct": ts_mean(r["ts"], "cpu"),
         "ram_mb": ts_mean(r["ts"], "ram"), "power_w": ts_mean(r["ts"], "power_w"),
         "rss_mb": s.get("rss_mb", float("nan")),
+        "view_frames": s.get("view_frames", 0),
     }
 
 
@@ -131,17 +132,18 @@ def write_tables(d, rows):
         w.writerows(rows)
     md = ["# Live runs compared", "",
           "Whole-robot CPU / GPU / RAM / power from tegrastats (Unitree's services included). Latency = camera frame "
-          "read to result. Target ID changes = times the followed person got a new ID (re-locks: same place).", "",
+          "read to result. Target ID changes = times the followed person got a new ID (re-locks: same place). "
+          "Live view frames > 0 = a browser was watching (costs some CPU).", "",
           "| run | note | engine | camera | variant | s | results/s | camera FPS | latency p50 / p95 ms | "
           "infer p50 ms | target present % | target ID changes (re-locks) | persons max | GPU % | CPU % | "
-          "RAM MB | power W | app RSS MB |",
-          "|" + "---|" * 18]
+          "RAM MB | power W | app RSS MB | live view frames |",
+          "|" + "---|" * 19]
     for r in rows:
-        md.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s / %s | %s | %s | %d (%d) | %d | %s | %s | %s | %s | %s |" % (
+        md.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s / %s | %s | %s | %d (%d) | %d | %s | %s | %s | %s | %s | %d |" % (
             r["run"], r["note"] or "-", r["engine"], r["camera"], r["variant"], f(r["seconds"], 0), f(r["fps"]),
             f(r["camera_fps"]), f(r["latency_p50"]), f(r["latency_p95"]), f(r["infer_p50"], 2), f(r["target_pct"]),
             r["id_changes"], r["relocks"], r["max_persons"], f(r["gpu_pct"]), f(r["cpu_pct"]), f(r["ram_mb"], 0),
-            f(r["power_w"], 2), f(r["rss_mb"], 0)))
+            f(r["power_w"], 2), f(r["rss_mb"], 0), r["view_frames"]))
     open(os.path.join(d, "comparison.md"), "w").write("\n".join(md) + "\n")
     return "\n".join(md)
 

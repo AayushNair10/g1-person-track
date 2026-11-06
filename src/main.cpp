@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "camera.hpp"
+#include "live_view.hpp"
 #include "cuda_utils.hpp"
 #include "ocsort.hpp"
 #include "postprocess.hpp"
@@ -49,6 +50,8 @@ struct Args {
     float conf = 0.25f, iou = 0.7f, relock_iou = 0.3f;
     bool graph = true, zero_copy = false, quiet = false, hw_resize = false;
     int print_every = 1, every = 1, dla = -1;
+    int view_port = 8090;
+    double view_fps = 15.0;
     int width = 0, height = 0, fps = 0;  // 0 = automatic (see resolve_camera_mode)
 };
 
@@ -74,6 +77,9 @@ void usage(const char* prog) {
         "  --summary PATH      run summary (Markdown; PATH.json too)\n"
         "  --label TEXT        name of this run in the summary\n"
         "  --save-video PATH   annotated MP4 of the first --save-seconds (default 30) seconds\n"
+        "  --view-port N       live view in a browser at http://<robot>:N/ (default 8090; 0 = off). Costs nothing\n"
+        "                      while no browser is open\n"
+        "  --view-fps F        frames per second sent to the browser (default 15)\n"
         "  --duration S        stop after S seconds (default: until the source ends / Ctrl+C)\n"
         "  --max-frames N      stop after N frames\n"
         "  --warmup N          frames left out of the timing statistics (default 15)\n"
@@ -115,6 +121,8 @@ bool parse(int argc, char** argv, Args& a) {
         else if (k == "--summary") a.summary = val();
         else if (k == "--label") a.label = val();
         else if (k == "--save-video") a.save_video = val();
+        else if (k == "--view-port") a.view_port = std::stoi(val());
+        else if (k == "--view-fps") a.view_fps = std::stod(val());
         else if (k == "--save-seconds") a.save_seconds = std::stod(val());
         else if (k == "--duration") a.duration = std::stod(val());
         else if (k == "--max-frames") a.max_frames = std::stol(val());
@@ -230,6 +238,7 @@ int main(int argc, char** argv) {
     resolve_camera_mode(a);
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+    std::signal(SIGPIPE, SIG_IGN);  // a browser closing the live view must never stop the tracker
 
     pt::CameraConfig cc;
     cc.source = a.source;
@@ -327,6 +336,13 @@ int main(int argc, char** argv) {
                                      (cam.source_fps() > 0 ? cam.source_fps() : 15.0) / a.every, a.save_seconds,
                                      static_cast<float>(cam.width()) / static_cast<float>(cam_w)));
 
+    std::unique_ptr<pt::LiveView> view;
+    if (a.view_port > 0) {
+        view.reset(new pt::LiveView(a.view_port, a.view_fps, cam.width(), cam.height(), cam.format(),
+                                    static_cast<float>(cam.width()) / static_cast<float>(cam_w)));
+        if (!view->ok()) view.reset();
+    }
+
     std::vector<double> s_wait, s_upload, s_pre, s_infer, s_post, s_track, s_total, s_gpu_wall;
     std::vector<pt::Det> dets, dets2;
     Agreement agree;
@@ -413,7 +429,8 @@ int main(int argc, char** argv) {
         }
         t_prev = t_done;
 
-        if (sink && sink->wants_more()) {
+        const bool to_sink = sink && sink->wants_more(), to_view = view && view->wants_frame(t_done);
+        if (to_sink || to_view) {
             pt::Overlay ov;
             ov.frame = static_cast<uint64_t>(frames);
             ov.tracks = tracks;
@@ -421,7 +438,8 @@ int main(int argc, char** argv) {
             ov.target = tgt;
             ov.fps = fps_ema;
             ov.latency_ms = total_ms;
-            sink->push(fr.data, fr.bytes, ov);
+            if (to_sink) sink->push(fr.data, fr.bytes, ov);
+            if (to_view) view->submit(fr.data, fr.bytes, ov, t_done);
         }
         cam.release(fr);
 
@@ -476,6 +494,8 @@ int main(int argc, char** argv) {
     }
     cam.stop();
     sink.reset();  // finish the video
+    const unsigned long long view_frames = view ? view->frames_sent() : 0ULL;
+    view.reset();
     if (csv) std::fclose(csv);
 
     // ---- summary
@@ -509,7 +529,7 @@ int main(int argc, char** argv) {
     add("- target present in %ld frames, absent in %ld; target ID changes %d (re-locks %d, re-acquisitions %d); "
         "tracker IDs seen %zu\n",
         with_target, without_target, target.id_changes(), target.relocks(), target.reacquires(), ids_seen.size());
-    add("- process RSS %.0f MB\n\n", rss);
+    add("- process RSS %.0f MB; live view frames sent %llu\n\n", rss, view_frames);
     md += "| stage (ms) | mean | p50 | p95 | max |\n|---|---|---|---|---|\n";
     auto row = [&](const char* name, const pt::Stat& s) {
         add("| %s | %.3f | %.3f | %.3f | %.3f |\n", name, s.mean, s.p50, s.p95, s.max);
@@ -550,6 +570,7 @@ int main(int argc, char** argv) {
                          eng.graph_active() ? "true" : "false", a.zero_copy ? "true" : "false", frames, counted, fps);
             std::fprintf(f, "\"frame_size\":\"%dx%d\",\"hw_resize\":%s,\"every\":%d,\"dla\":%d,", cam.width(),
                          cam.height(), cam.hw_resized() ? "true" : "false", a.every, dla);
+            std::fprintf(f, "\"view_frames\":%llu,", view_frames);
             std::fprintf(f, "\"camera_mode\":\"%dx%d@%d\",\"source_fps\":%.2f,\"camera_fps\":%.2f,\"start_unix\":%.3f,",
                          a.width, a.height, a.fps, cam.source_fps(), cam.capture_fps(), t_start_unix);
             std::fprintf(f, "\"frames_read\":%llu,\"dropped\":%llu,\"gaps\":%llu,\"with_target\":%ld,\"without_target\":%ld,",

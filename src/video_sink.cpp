@@ -64,22 +64,24 @@ void VideoSink::loop() {
             job = std::move(q_.front());
             q_.pop_front();
         }
-        if (fmt_ == PixelFormat::NV12) {
-            const cv::Mat yuv(h_ * 3 / 2, w_, CV_8UC1, job.data.data());
-            cv::cvtColor(yuv, bgr, cv::COLOR_YUV2BGR_NV12);
-        } else {
-            cv::Mat(h_, w_, CV_8UC3, job.data.data()).copyTo(bgr);
-        }
-        draw(bgr, job.ov);
+        frame_to_bgr(job.data.data(), w_, h_, fmt_, bgr);
+        draw_overlay(bgr, job.ov, box_scale_);
         writer_.write(bgr);
         ++written_;
     }
 }
 
-void VideoSink::draw(cv::Mat& img, const Overlay& ov) const {
-    const double scale = img.cols / 1280.0;
+void frame_to_bgr(const uint8_t* data, int w, int h, PixelFormat fmt, cv::Mat& bgr) {
+    if (fmt == PixelFormat::NV12)
+        cv::cvtColor(cv::Mat(h * 3 / 2, w, CV_8UC1, const_cast<uint8_t*>(data)), bgr, cv::COLOR_YUV2BGR_NV12);
+    else
+        cv::Mat(h, w, CV_8UC3, const_cast<uint8_t*>(data)).copyTo(bgr);
+}
+
+void draw_overlay(cv::Mat& img, const Overlay& ov, float box_scale) {
+    const double scale = std::max(0.5, img.cols / 1280.0);
     const int thin = std::max(1, static_cast<int>(2 * scale)), thick = std::max(2, static_cast<int>(4 * scale));
-    auto px = [&](float v) { return static_cast<int>(v * box_scale_); };  // camera -> frame pixels
+    auto px = [&](float v) { return static_cast<int>(v * box_scale); };  // camera -> frame pixels
     char txt[128];
     for (const auto& t : ov.tracks) {
         const bool is_target = ov.has_target && t.id == ov.target.id;
@@ -97,8 +99,10 @@ void VideoSink::draw(cv::Mat& img, const Overlay& ov) const {
         cv::putText(img, txt, cv::Point(px(t.x1) + 4, std::max(px(t.y1) - 8, 20)), cv::FONT_HERSHEY_SIMPLEX,
                     0.8 * scale, cv::Scalar(0, 220, 0), thick);
     }
-    std::snprintf(txt, sizeof(txt), "frame %llu  %.1f FPS  latency %.1f ms", static_cast<unsigned long long>(ov.frame),
-                  ov.fps, ov.latency_ms);
+    char tgt[32] = "no target";
+    if (ov.has_target) std::snprintf(tgt, sizeof(tgt), "target id %d", ov.target.id);
+    std::snprintf(txt, sizeof(txt), "frame %llu  %.1f FPS  latency %.1f ms  tracked %zu  %s",
+                  static_cast<unsigned long long>(ov.frame), ov.fps, ov.latency_ms, ov.tracks.size(), tgt);
     cv::putText(img, txt, cv::Point(10, static_cast<int>(30 * scale)), cv::FONT_HERSHEY_SIMPLEX, 0.8 * scale,
                 cv::Scalar(0, 255, 255), thin);
 }

@@ -28,6 +28,17 @@ head camera, RealSense D435i colour sensor read directly (/dev/video4, YUYV 640x
 
 Robot-day steps: [docs/RUNBOOK.md](docs/RUNBOOK.md) (Option B only).
 
+## Live view in a browser
+
+While the program runs, open **http://192.168.123.164:8090/** in a browser on the laptop: the camera picture
+with the target in green, other tracked people in grey, and a status line (frame, results per second, latency,
+tracked people, target ID). Also `/stream` (the MJPEG stream itself) and `/snapshot.jpg`. Same idea as
+FaceHandTrack's viewer; POSIX sockets + OpenCV's JPEG encoder, nothing extra. Frames are handed over (at most
+`--view-fps`, default 15) only while a browser is open, and drawn and encoded on the view's own thread, so with
+no browser open it costs nothing. `--view-port 0` turns it off; if the port is taken the tracker runs without it.
+Checked on the laptop with real sockets (`tests/desktop/check_live_view.sh`: page, stream rate, snapshot,
+viewer count, clean shutdown with a browser connected).
+
 ## Analytics from the robot
 
 `scripts/run_live.sh` gives every run its own folder on the robot, `~/aayush_person_track/runs/<NNN>_<TAG>/`:
@@ -169,7 +180,8 @@ src/                 C++ app (person_track)
   postprocess.hpp    NMS-free / raw-head decoding, NMS, box mapping
   ocsort.*           OC-SORT (port of Ultralytics 8.4)
   target.hpp         target choice: largest at start, keep ID, IoU re-lock
-  video_sink.*       annotated MP4 writer thread
+  video_sink.*       annotated MP4 writer thread (+ the drawing shared with the live view)
+  live_view.*        live view in a browser (MJPEG over HTTP, port 8090)
 Makefile             build on the robot: make -j4 -> build/person_track
 scripts/             export_models.py, validate_onnx.py, yolo_ref.py (laptop); phase1_verify.sh, deploy.sh,
                      fetch_results.sh, g1_env.sh (laptop -> robot); build_engines.sh, record_clip.sh,

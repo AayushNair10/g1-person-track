@@ -27,6 +27,11 @@ struct Overlay {
     double fps = 0, latency_ms = 0;
 };
 
+// Camera frame (BGR or NV12, as the camera delivers it) -> BGR image.
+void frame_to_bgr(const uint8_t* data, int w, int h, PixelFormat fmt, cv::Mat& bgr);
+// Draws the tracks (grey), the target (green) and a status line. box_scale: frame pixels per camera pixel.
+void draw_overlay(cv::Mat& img, const Overlay& ov, float box_scale);
+
 class VideoSink {
 public:
     // box_scale: frame pixels per camera pixel (boxes are in camera pixels; < 1 after a hardware resize)
@@ -45,7 +50,6 @@ public:
 
 private:
     void loop();
-    void draw(cv::Mat& bgr, const Overlay& ov) const;
 
     std::string path_;
     int w_, h_;

@@ -86,7 +86,8 @@ cd ~/aayush_person_track && sudo pkill -f videohub_pc4; build/person_track --pri
 Defaults: `/dev/video4`, 640x360 @ 30 FPS (exactly the picture inside the 640x384 model input), the default
 engine. Look for `driver reports 640x360 @ 30.0 FPS, format YUYV`. One line per second:
 `frame,timestamp,target_id,x1,y1,x2,y2,conf,n_persons,...` (`target_id` -1 = nobody; box in 640x360 pixels).
-Ctrl+C prints the summary (results per second should be close to 30). If it says the camera is busy, run
+**Live view:** while it runs, open http://192.168.123.164:8090/ in a browser on the Mac (green box = the
+person being followed). Ctrl+C prints the summary (results per second should be close to 30). If it says the camera is busy, run
 `sudo -v` and try again (the restart won the race). Other mode if 640x360 is not offered:
 `--width 640 --height 480`. Below 30 FPS in a dim room = the camera's auto exposure: more light helps.
 
@@ -114,7 +115,9 @@ sudo pkill -f videohub_pc4; TAG=416 NOTE="416x256 engine" ENGINE=models/yolo26n_
 sudo pkill -f videohub_pc4; TAG=lean416 ENGINE=models/yolo26n_416x256.fp16.lean.engine scripts/run_live.sh
 sudo pkill -f videohub_pc4; TAG=dla ENGINE=models/yolo26n_640x384.fp16.dla0.engine scripts/run_live.sh
 ```
-Ctrl+C ends a run early and still saves everything.
+Ctrl+C ends a run early and still saves everything. The live view (http://192.168.123.164:8090/) works during
+these runs too; it costs some CPU while a browser is open, so for fair comparisons keep it either closed in all
+runs or open in all (the comparison table shows "live view frames" per run).
 
 ## 9. Copy and compare (Terminal 1)
 
