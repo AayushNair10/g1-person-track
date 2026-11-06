@@ -48,33 +48,42 @@ def trtexec_rows(d):
     return rows
 
 
-def tegrastats(path):
-    gpu, ram, cpu, power, emc = [], [], [], [], []
+def tegrastats_series(path):
+    """Per-sample values from a tegrastats log (one line a second); missing fields stay None."""
+    out = {"gpu": [], "cpu": [], "ram": [], "ram_total": None, "power_w": [], "emc": [], "vic": []}
+
+    def num(pattern, line, key, scale=1.0):
+        m = re.search(pattern, line)
+        out[key].append(int(m.group(1)) * scale if m else None)
+
     for line in open(path, errors="replace"):
-        m = re.search(r"GR3D_FREQ (\d+)%", line)
-        if m:
-            gpu.append(int(m.group(1)))
+        if "RAM " not in line and "GR3D" not in line:
+            continue
+        num(r"GR3D_FREQ (\d+)%", line, "gpu")
         m = re.search(r"RAM (\d+)/(\d+)MB", line)
+        out["ram"].append(int(m.group(1)) if m else None)
         if m:
-            ram.append((int(m.group(1)), int(m.group(2))))
+            out["ram_total"] = int(m.group(2))
         m = re.search(r"CPU \[([^\]]+)\]", line)
-        if m:
-            loads = [int(x) for x in re.findall(r"(\d+)%", m.group(1))]
-            if loads:
-                cpu.append(mean(loads))
-        m = re.search(r"VDD_IN (\d+)mW", line)
-        if m:
-            power.append(int(m.group(1)))
-        m = re.search(r"EMC_FREQ (\d+)%", line)
-        if m:
-            emc.append(int(m.group(1)))
+        loads = [int(x) for x in re.findall(r"(\d+)%", m.group(1))] if m else []
+        out["cpu"].append(mean(loads) if loads else None)
+        num(r"VDD_IN (\d+)mW", line, "power_w", 0.001)
+        num(r"EMC_FREQ (\d+)%", line, "emc")
+        num(r"VIC_FREQ (\d+)%", line, "vic")
+    return out
+
+
+def tegrastats(path):
+    s = tegrastats_series(path)
+    v = {k: [x for x in s[k] if x is not None] for k in ("gpu", "cpu", "ram", "power_w", "emc")}
+    gpu, ram = v["gpu"], v["ram"]
     return {
         "samples": max(len(gpu), len(ram)),
         "gpu_mean": mean(gpu), "gpu_p95": pct(gpu, 0.95), "gpu_max": max(gpu) if gpu else float("nan"),
-        "ram_mean": mean([r[0] for r in ram]), "ram_max": max([r[0] for r in ram]) if ram else float("nan"),
-        "ram_total": ram[0][1] if ram else float("nan"),
-        "cpu_mean": mean(cpu), "power_mean_w": mean(power) / 1000 if power else float("nan"),
-        "emc_mean": mean(emc),
+        "ram_mean": mean(ram), "ram_max": max(ram) if ram else float("nan"),
+        "ram_total": s["ram_total"] if s["ram_total"] else float("nan"),
+        "cpu_mean": mean(v["cpu"]), "power_mean_w": mean(v["power_w"]) if v["power_w"] else float("nan"),
+        "emc_mean": mean(v["emc"]),
     }
 
 

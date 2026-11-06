@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdio>
@@ -38,7 +39,7 @@ void on_signal(int) { g_stop = true; }
 
 struct Args {
     std::string engine = "models/yolo26n_640x384.fp16.engine";
-    std::string source = "videohub";
+    std::string source = "/dev/video4";  // Option B: the head camera's colour sensor directly
     std::string format = "auto";
     std::string dec_opts;
     std::string csv, summary, save_video, compare, label;
@@ -48,16 +49,16 @@ struct Args {
     float conf = 0.25f, iou = 0.7f, relock_iou = 0.3f;
     bool graph = true, zero_copy = false, quiet = false, hw_resize = false;
     int print_every = 1, every = 1, dla = -1;
-    int width = 1280, height = 720, fps = 15;
+    int width = 0, height = 0, fps = 0;  // 0 = automatic (see resolve_camera_mode)
 };
 
 void usage(const char* prog) {
     std::printf(
         "usage: %s [options]\n"
         "  --engine PATH       TensorRT engine (default models/yolo26n_640x384.fp16.engine)\n"
-        "  --source SRC        videohub | videohub-nv12 | FILE.h264 | FILE.mp4 | /dev/videoN | 'gst pipeline ! appsink'\n"
-        "                      (default videohub = Option A, the lab's tested head-camera stream pipeline;\n"
-        "                      /dev/video4 = Option B, the camera directly, after videohub_pc4 was stopped by hand)\n"
+        "  --source SRC        /dev/videoN | FILE.h264 | FILE.mp4 | videohub | videohub-nv12 | 'gst pipeline ! appsink'\n"
+        "                      (default /dev/video4 = Option B: the head camera's colour sensor directly; needs\n"
+        "                      videohub_pc4 stopped by hand first. videohub = Option A, Unitree's stream)\n"
         "  --format bgr|nv12   .h264 files: default nv12. /dev/videoN: default bgr (OpenCV V4L2); nv12 = GStreamer\n"
         "                      v4l2src with the VIC converting YUYV -> NV12 (no CPU colour conversion)\n"
         "  --hw-resize         videohub / .h264: the VIC (nvvidconv) scales frames to the model's picture size\n"
@@ -81,8 +82,9 @@ void usage(const char* prog) {
         "  --zero-copy         let the GPU read the pinned frame directly instead of copying it first\n"
         "  --print-every N     print every Nth frame to stdout (default 1)\n"
         "  --quiet             no per-frame lines on stdout\n"
-        "  --width/--height    camera size (default 1280x720: the videohub stream; /dev/videoN: mode to ask for)\n"
-        "  --fps N             /dev/videoN: frame rate to ask for (default 15; the D435i colour sensor does 60\n"
+        "  --width/--height    /dev/videoN: mode to ask for (default 640x360 = the 640x384 model's picture size);\n"
+        "                      videohub: the stream's size (default 1280x720); files: read from the file\n"
+        "  --fps N             /dev/videoN: frame rate to ask for (default 60; the D435i colour sensor does 60\n"
         "                      up to 960x540, 30 at 1280x720 and 1920x1080)\n",
         prog);
 }
@@ -132,6 +134,31 @@ bool parse(int argc, char** argv, Args& a) {
         }
     }
     return true;
+}
+
+// Fills in --width/--height/--fps left at 0: the camera mode to ask for (/dev/videoN), the stream's size
+// (videohub), or for files the size read from the file (only needed for --hw-resize).
+void resolve_camera_mode(Args& a) {
+    const bool direct = a.source.rfind("/dev/video", 0) == 0;
+    const bool hub = a.source.rfind("videohub", 0) == 0;
+    if (a.fps <= 0) a.fps = direct ? 60 : 15;
+    if (a.width > 0 && a.height > 0) return;
+    if (direct) {
+        a.width = 640;
+        a.height = 360;
+    } else if (!hub && a.hw_resize) {
+        pt::CameraConfig c;
+        c.source = a.source;
+        c.format = a.format;
+        c.dec_opts = a.dec_opts;
+        if (!pt::probe_frame_size(c, a.width, a.height)) {
+            std::fprintf(stderr, "cannot read the frame size of %s\n", a.source.c_str());
+            std::exit(1);
+        }
+    } else {
+        a.width = 1280;
+        a.height = 720;
+    }
 }
 
 double rss_mb() {  // resident memory of this process (Linux)
@@ -201,6 +228,7 @@ struct Agreement {
 int main(int argc, char** argv) {
     Args a;
     if (!parse(argc, argv, a)) return 2;
+    resolve_camera_mode(a);
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
@@ -302,6 +330,8 @@ int main(int argc, char** argv) {
     double t_first = 0, t_last = 0, fps_ema = 0, t_prev = 0, t_status = 0;
     uint64_t last_seq = 0, gaps = 0, read_base = 0, drop_base = 0;
     const double t_start = pt::now_s();
+    const double t_start_unix =  // same moment on the system clock, to line up with tegrastats / other logs
+        std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     while (!g_stop) {
         const double t_req = pt::now_s();
@@ -515,6 +545,8 @@ int main(int argc, char** argv) {
                          eng.graph_active() ? "true" : "false", a.zero_copy ? "true" : "false", frames, counted, fps);
             std::fprintf(f, "\"frame_size\":\"%dx%d\",\"hw_resize\":%s,\"every\":%d,\"dla\":%d,", cam.width(),
                          cam.height(), cam.hw_resized() ? "true" : "false", a.every, dla);
+            std::fprintf(f, "\"camera_mode\":\"%dx%d@%d\",\"source_fps\":%.2f,\"camera_fps\":%.2f,\"start_unix\":%.3f,",
+                         a.width, a.height, a.fps, cam.source_fps(), cam.capture_fps(), t_start_unix);
             std::fprintf(f, "\"frames_read\":%llu,\"dropped\":%llu,\"gaps\":%llu,\"with_target\":%ld,\"without_target\":%ld,",
                          n_read, n_drop, static_cast<unsigned long long>(gaps),
                          with_target, without_target);

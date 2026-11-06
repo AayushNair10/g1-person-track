@@ -32,7 +32,7 @@
 namespace pt {
 
 struct CameraConfig {
-    std::string source = "videohub";
+    std::string source = "/dev/video4";
     std::string format = "auto";  // .h264 files: bgr | nv12 (auto = nv12); /dev/videoN: bgr | nv12 (auto = bgr)
     std::string dec_opts;         // extra nvv4l2decoder properties, e.g. "enable-max-performance=1"
     int width = 1280, height = 720, fps = 15;  // /dev/videoN: mode to ask for (YUYV)
@@ -50,6 +50,9 @@ struct Frame {
     double read_ms = 0.0;           // time inside VideoCapture::read
     int slot = -1;
 };
+
+// Frame size of a file source (opens it, reads one frame). Used to plan --hw-resize for files.
+bool probe_frame_size(const CameraConfig& cfg, int& w, int& h);
 
 class Camera {
 public:

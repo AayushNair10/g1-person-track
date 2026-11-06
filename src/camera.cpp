@@ -50,6 +50,23 @@ bool ends_with(const std::string& s, const char* suffix) {
 
 }  // namespace
 
+bool probe_frame_size(const CameraConfig& cfg, int& w, int& h) {
+    cv::VideoCapture cap;
+    const std::string& src = cfg.source;
+    const std::string dec = cfg.dec_opts.empty() ? "" : " " + cfg.dec_opts;
+    bool ok;
+    if (ends_with(src, ".h264") || ends_with(src, ".264"))
+        ok = cap.open("filesrc location=\"" + src + "\" ! h264parse ! nvv4l2decoder" + dec + tail(true, false, 0, 0, ""),
+                      cv::CAP_GSTREAMER);
+    else
+        ok = cap.open(src);
+    cv::Mat m;
+    if (!ok || !cap.read(m) || m.empty()) return false;
+    w = m.cols;
+    h = m.type() == CV_8UC1 && m.rows % 3 == 0 ? m.rows * 2 / 3 : m.rows;
+    return true;
+}
+
 Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()), every_(cfg.every > 1 ? cfg.every : 1) {
     const std::string& src = cfg.source;
     const std::string dec = cfg.dec_opts.empty() ? "" : " " + cfg.dec_opts;

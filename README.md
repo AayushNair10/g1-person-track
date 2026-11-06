@@ -6,9 +6,10 @@ is followed. Its box and ID are printed every frame. Lightweight first: C++ only
 (CUDA 11.4, TensorRT 8.5.2, OpenCV 4.2 and GStreamer are already there).
 
 ```
-head camera (videohub_pc4, H.264 multicast 1280x720 @ 15 FPS)
-  -> GStreamer + hardware decoder (camera thread, newest frame wins, decoded straight into pinned memory)
-  -> one CUDA kernel: letterbox 1280x720 -> 640x384, BGR/NV12 -> RGB, /255, CHW, into the TensorRT input
+head camera, RealSense D435i colour sensor read directly (/dev/video4, YUYV 640x360 @ 60 FPS; "Option B":
+  Unitree's videohub_pc4 is stopped by hand first)
+  -> camera thread (newest frame wins), frames straight into pinned memory
+  -> one CUDA kernel: letterbox 640x360 -> 640x384, BGR/NV12 -> RGB, /255, CHW, into the TensorRT input
   -> TensorRT YOLO26n fp16 (enqueueV2, replayed as a CUDA graph)
   -> decode person boxes (NMS-free head: no NMS) -> C++ OC-SORT -> target selector
   -> stdout / CSV: frame, timestamp, target_id, x1, y1, x2, y2, conf + per-stage timings (+ annotated MP4)
@@ -22,10 +23,28 @@ head camera (videohub_pc4, H.264 multicast 1280x720 @ 15 FPS)
 | 2 Export + check ONNX | **done** on the laptop, all checks pass (below) |
 | 3 Build engines | script ready (`scripts/build_engines.sh`), runs on the robot |
 | 4 C++ app | **written and checked on the laptop**: tracker, preprocessing and decoding tested against Ultralytics; all sources compile against the real TensorRT 8.5 / CUDA 11.4 / OpenCV 4.2 headers. Compiled on the robot. |
-| 5 Validate on robot | scripts ready (`run_offline.sh`, `run_live.sh`, `make_results.py`) |
+| 5 Validate on robot | scripts ready: `run_live.sh` saves every run in its own folder, `analyze_runs.py` compares them (`run_offline.sh`, `make_results.py` for recorded clips) |
 | 6 ROS 2 / pose | only on request |
 
-Robot-day steps: [docs/RUNBOOK.md](docs/RUNBOOK.md). Results will land in `docs/RESULTS.md`.
+Robot-day steps: [docs/RUNBOOK.md](docs/RUNBOOK.md) (Option B only).
+
+## Analytics from the robot
+
+`scripts/run_live.sh` gives every run its own folder on the robot, `~/aayush_person_track/runs/<NNN>_<TAG>/`:
+
+| file | contents |
+|---|---|
+| `frames.csv` | every frame: time, target ID and box, confidence, persons in view, time of each stage, latency |
+| `summary.md`, `summary.md.json` | the run's totals: results per second, latency percentiles, target ID changes, memory |
+| `tegrastats.log` | whole robot once a second: CPU per core, GPU, RAM, power, memory bus |
+| `run.txt` | settings: command, engine, camera mode, your `NOTE`, app build, start times |
+| `console.log` | what the app printed |
+| `video.mp4` | annotated video (only with `VIDEO=<seconds>`) |
+
+On the laptop, `scripts/get_runs.sh` copies all of them into `results/runs/` (not in git: the repository is
+public and the videos show people) and runs `scripts/analyze_runs.py`, which writes `comparison.md` /
+`comparison.csv` (one row per run) and `comparison.png` (runs side by side), plus `analysis.png` in each run
+folder (results per second, latency, target presence and ID changes, CPU/GPU load and power over time).
 
 ## What was checked on the laptop
 
@@ -105,13 +124,14 @@ smaller at robot distances):
 | 320x320 | 1.35 | |
 | 320x192 | 0.81 | 4 of 286 missed, IoU 0.962 (5th percentile 0.891) |
 
-Switches for lower compute, all measured on the robot by `run_offline.sh` and the runbook's step 5c (defaults
-stay the tested lab pipeline until the numbers are in):
+Switches for lower compute, each compared on the robot with `run_live.sh` runs (runbook step 8):
 
-- `--hw-resize`: the VIC (Jetson's video scaler, separate from GPU and CPU) shrinks 1280x720 to the model's
-  picture size inside GStreamer, so a quarter of the pixels (640x360 NV12, 0.35 MB instead of 2.8 MB BGR) reaches
-  the CPU and the GPU; the GPU kernel then only pads. Boxes still come out in 1280x720 camera pixels. Laptop
-  simulation: same target, box IoU >= 0.99 vs the full-size path (`tests/desktop/check_pipeline.py`, part 4).
+- the camera mode itself (Option B): the default 640x360 is exactly the picture inside the 640x384 model input,
+  so nothing is resized at all; larger modes (848x480, 1280x720 @ 30) see more detail but need scaling.
+- `--hw-resize`: the VIC (Jetson's video scaler, separate from GPU and CPU) shrinks the frame to the model's
+  picture size inside GStreamer (e.g. 1280x720 -> 640x360 NV12, 0.35 MB instead of 2.8 MB BGR), so the GPU
+  kernel only pads. Boxes still come out in camera pixels. Laptop simulation: same target, box IoU >= 0.99 vs
+  the full-size path (`tests/desktop/check_pipeline.py`, part 4).
 - a smaller engine: 416x256 is 2.3x and 320x192 4x less compute than 640x384.
 - lean engines (`LEAN=1 scripts/build_engines.sh`): no cuDNN/cuBLAS, so less RAM and a faster start.
 - DLA engines (`DLA=0 scripts/build_engines.sh`): the network runs on the Orin's deep-learning accelerator, which
@@ -119,7 +139,7 @@ stay the tested lab pipeline until the numbers are in):
 - `--every N`: process 1 of every N frames (skipped frames are never copied), with the tracker's memory scaled
   to the same number of seconds.
 
-The camera stream is 15 FPS, so live output cannot go above 15 FPS with Option A. What can be optimised is
+With Option A (Unitree's stream) the camera is 15 FPS, so live output cannot go above 15 FPS with Option A. What can be optimised is
 keeping every frame and cutting the delay from frame arrival to result. Done:
 
 - 16:9 model input (640x384) instead of 640x640: same picture, ~40% less compute
@@ -153,7 +173,8 @@ src/                 C++ app (person_track)
 Makefile             build on the robot: make -j4 -> build/person_track
 scripts/             export_models.py, validate_onnx.py, yolo_ref.py (laptop); phase1_verify.sh, deploy.sh,
                      fetch_results.sh, g1_env.sh (laptop -> robot); build_engines.sh, record_clip.sh,
-                     run_offline.sh, run_live.sh, compare_runs.py, make_results.py (robot)
+                     run_offline.sh, run_live.sh, compare_runs.py, make_results.py (robot);
+                     analyze_runs.py (both), get_runs.sh (laptop)
 tests/desktop/       laptop checks: tracker vs Ultralytics, preprocessing/decoding vs OpenCV/ORT, compile check
 models/              ONNX files (generated, not in git), onnx_report.json, onnx_validation.md
 docs/                RUNBOOK.md (robot day), RESULTS.md (after the robot runs)
@@ -164,16 +185,19 @@ docs/                RUNBOOK.md (robot day), RESULTS.md (after the robot runs)
 On the robot (after `scripts/deploy.sh all`, `scripts/build_engines.sh`, `make -j4`):
 
 ```bash
-build/person_track                                   # default engine, head camera via the lab pipeline
-build/person_track --source videohub-nv12 --quiet --csv logs/run.csv --summary logs/run.md
+build/person_track                                   # default engine, /dev/video4 at 640x360 @ 60 FPS (Option B)
+build/person_track --format nv12                     # same, the VIC converts YUYV -> NV12 (no CPU colour conversion)
+build/person_track --width 848 --height 480          # another camera mode (60 FPS up to 960x540)
+TAG=walk NOTE="2 m, walking" scripts/run_live.sh    # logged 120 s run -> runs/<NNN>_walk/
 build/person_track --source frames/clip1.h264 --compare models/yolo26n_640x384.fp32.engine --quiet
 build/person_track --save-video logs/demo.mp4 --save-seconds 30 --duration 30
-build/person_track --source videohub-nv12 --hw-resize --engine models/yolo26n_416x256.fp16.lean.engine  # least compute
+build/person_track --engine models/yolo26n_416x256.fp16.lean.engine --hw-resize   # least compute
+build/person_track --source videohub                  # Option A (Unitree's stream), not used in the runbook
 build/person_track --help
 ```
 
 Per-frame output: `frame,timestamp,target_id,x1,y1,x2,y2,conf,n_persons,wait_ms,upload_ms,pre_ms,infer_ms,post_ms,track_ms,total_ms,event`.
-Boxes are in camera pixels (1280x720). `timestamp` is seconds since start on the monotonic clock (the robot's
+Boxes are in camera pixels (640x360 by default). `timestamp` is seconds since start on the monotonic clock (the robot's
 wall clock may be unset). `total_ms` is the delay from the frame leaving the decoder to the result.
 `target_id` is -1 when no target is visible.
 
