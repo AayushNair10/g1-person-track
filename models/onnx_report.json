@@ -1,0 +1,520 @@
+[
+ {
+  "file": "yolo11n_640x384.onnx",
+  "size_mb": 10.67,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     384,
+     640
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     84,
+     5040
+    ]
+   ]
+  ],
+  "n_nodes": 320,
+  "ops": {
+   "Add": 16,
+   "Concat": 21,
+   "Conv": 88,
+   "Div": 1,
+   "MatMul": 2,
+   "MaxPool": 3,
+   "Mul": 79,
+   "Reshape": 11,
+   "Resize": 2,
+   "Sigmoid": 78,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 10,
+   "Sub": 2,
+   "Transpose": 3
+  },
+  "int64_initializers": 15,
+  "end2end": "False",
+  "problems": []
+ },
+ {
+  "file": "yolo11n_640x640.onnx",
+  "size_mb": 10.74,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     640,
+     640
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     84,
+     8400
+    ]
+   ]
+  ],
+  "n_nodes": 320,
+  "ops": {
+   "Add": 16,
+   "Concat": 21,
+   "Conv": 88,
+   "Div": 1,
+   "MatMul": 2,
+   "MaxPool": 3,
+   "Mul": 79,
+   "Reshape": 11,
+   "Resize": 2,
+   "Sigmoid": 78,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 10,
+   "Sub": 2,
+   "Transpose": 3
+  },
+  "int64_initializers": 15,
+  "end2end": "False",
+  "problems": []
+ },
+ {
+  "file": "yolo26n-raw_640x384.onnx",
+  "size_mb": 9.86,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     384,
+     640
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     84,
+     5040
+    ]
+   ]
+  ],
+  "n_nodes": 368,
+  "ops": {
+   "Add": 22,
+   "Concat": 23,
+   "Conv": 102,
+   "Div": 1,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mul": 90,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 11,
+   "Sub": 2,
+   "Transpose": 4
+  },
+  "int64_initializers": 13,
+  "end2end": "False",
+  "problems": []
+ },
+ {
+  "file": "yolo26n-raw_640x640.onnx",
+  "size_mb": 9.93,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     640,
+     640
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     84,
+     8400
+    ]
+   ]
+  ],
+  "n_nodes": 368,
+  "ops": {
+   "Add": 22,
+   "Concat": 23,
+   "Conv": 102,
+   "Div": 1,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mul": 90,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 11,
+   "Sub": 2,
+   "Transpose": 4
+  },
+  "int64_initializers": 13,
+  "end2end": "False",
+  "problems": []
+ },
+ {
+  "file": "yolo26n_320x192.onnx",
+  "size_mb": 9.8,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     192,
+     320
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     300,
+     6
+    ]
+   ]
+  ],
+  "n_nodes": 384,
+  "ops": {
+   "Add": 21,
+   "Cast": 1,
+   "Concat": 24,
+   "Conv": 102,
+   "Div": 1,
+   "Expand": 2,
+   "Flatten": 1,
+   "GatherElements": 3,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mod": 1,
+   "Mul": 90,
+   "ReduceMax": 1,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 12,
+   "Sub": 1,
+   "TopK": 2,
+   "Transpose": 5,
+   "Unsqueeze": 4
+  },
+  "int64_initializers": 18,
+  "end2end": "True",
+  "problems": []
+ },
+ {
+  "file": "yolo26n_320x320.onnx",
+  "size_mb": 9.82,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     320,
+     320
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     300,
+     6
+    ]
+   ]
+  ],
+  "n_nodes": 384,
+  "ops": {
+   "Add": 21,
+   "Cast": 1,
+   "Concat": 24,
+   "Conv": 102,
+   "Div": 1,
+   "Expand": 2,
+   "Flatten": 1,
+   "GatherElements": 3,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mod": 1,
+   "Mul": 90,
+   "ReduceMax": 1,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 12,
+   "Sub": 1,
+   "TopK": 2,
+   "Transpose": 5,
+   "Unsqueeze": 4
+  },
+  "int64_initializers": 18,
+  "end2end": "True",
+  "problems": []
+ },
+ {
+  "file": "yolo26n_416x256.onnx",
+  "size_mb": 9.82,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     256,
+     416
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     300,
+     6
+    ]
+   ]
+  ],
+  "n_nodes": 384,
+  "ops": {
+   "Add": 21,
+   "Cast": 1,
+   "Concat": 24,
+   "Conv": 102,
+   "Div": 1,
+   "Expand": 2,
+   "Flatten": 1,
+   "GatherElements": 3,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mod": 1,
+   "Mul": 90,
+   "ReduceMax": 1,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 12,
+   "Sub": 1,
+   "TopK": 2,
+   "Transpose": 5,
+   "Unsqueeze": 4
+  },
+  "int64_initializers": 18,
+  "end2end": "True",
+  "problems": []
+ },
+ {
+  "file": "yolo26n_416x416.onnx",
+  "size_mb": 9.84,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     416,
+     416
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     300,
+     6
+    ]
+   ]
+  ],
+  "n_nodes": 384,
+  "ops": {
+   "Add": 21,
+   "Cast": 1,
+   "Concat": 24,
+   "Conv": 102,
+   "Div": 1,
+   "Expand": 2,
+   "Flatten": 1,
+   "GatherElements": 3,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mod": 1,
+   "Mul": 90,
+   "ReduceMax": 1,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 12,
+   "Sub": 1,
+   "TopK": 2,
+   "Transpose": 5,
+   "Unsqueeze": 4
+  },
+  "int64_initializers": 18,
+  "end2end": "True",
+  "problems": []
+ },
+ {
+  "file": "yolo26n_640x384.onnx",
+  "size_mb": 9.87,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     384,
+     640
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     300,
+     6
+    ]
+   ]
+  ],
+  "n_nodes": 384,
+  "ops": {
+   "Add": 21,
+   "Cast": 1,
+   "Concat": 24,
+   "Conv": 102,
+   "Div": 1,
+   "Expand": 2,
+   "Flatten": 1,
+   "GatherElements": 3,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mod": 1,
+   "Mul": 90,
+   "ReduceMax": 1,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 12,
+   "Sub": 1,
+   "TopK": 2,
+   "Transpose": 5,
+   "Unsqueeze": 4
+  },
+  "int64_initializers": 18,
+  "end2end": "True",
+  "problems": []
+ },
+ {
+  "file": "yolo26n_640x640.onnx",
+  "size_mb": 9.94,
+  "opset": 16,
+  "inputs": [
+   [
+    "images",
+    [
+     1,
+     3,
+     640,
+     640
+    ]
+   ]
+  ],
+  "outputs": [
+   [
+    "output0",
+    [
+     1,
+     300,
+     6
+    ]
+   ]
+  ],
+  "n_nodes": 384,
+  "ops": {
+   "Add": 21,
+   "Cast": 1,
+   "Concat": 24,
+   "Conv": 102,
+   "Div": 1,
+   "Expand": 2,
+   "Flatten": 1,
+   "GatherElements": 3,
+   "MatMul": 4,
+   "MaxPool": 3,
+   "Mod": 1,
+   "Mul": 90,
+   "ReduceMax": 1,
+   "Reshape": 12,
+   "Resize": 2,
+   "Sigmoid": 88,
+   "Slice": 2,
+   "Softmax": 2,
+   "Split": 12,
+   "Sub": 1,
+   "TopK": 2,
+   "Transpose": 5,
+   "Unsqueeze": 4
+  },
+  "int64_initializers": 18,
+  "end2end": "True",
+  "problems": []
+ }
+]

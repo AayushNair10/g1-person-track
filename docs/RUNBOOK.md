@@ -1,0 +1,101 @@
+# Robot-day runbook
+
+Everything that does not need the robot is done (see the README). This is the order for the robot session.
+Steps marked **writes** change files on the robot, always only inside `/home/unitree/aayush_person_track/`,
+and are announced before they run. Nothing is installed on the robot, sudo is only used for the two
+read-only Phase 1 checks (`nvpmodel -q`, `fuser -v`), and `videohub_pc4`, power mode and system files are
+never touched.
+
+## 0. Connect (you)
+
+1. Power on the robot, wait 1-2 min.
+2. USB LAN adapter on the Mac, cable to the robot.
+3. System Settings -> Network -> *USB 10/100/1000 LAN* -> Details -> TCP/IP: Configure IPv4 **Manually**,
+   IP `192.168.123.222`, subnet `255.255.255.0`, router empty.
+4. In your own terminal, open one shared SSH connection (password once; `-N` opens no shell, so no ROS prompt):
+
+   ```bash
+   ssh -fNM -o ControlPath=~/.ssh/cm-g1 -o ControlPersist=12h unitree@192.168.123.164
+   ```
+   Close it at the end with `ssh -O exit -o ControlPath=~/.ssh/cm-g1 unitree@192.168.123.164`.
+
+## 1. Verify the robot (read-only)
+
+```bash
+ping -c 3 192.168.123.164
+source scripts/g1_env.sh && g1_check
+mkdir -p results && ssh -n -o ControlPath=~/.ssh/cm-g1 unitree@192.168.123.164 "$(cat scripts/phase1_verify.sh)" | tee results/phase1.txt
+```
+Compare with the lab guide: Orin NX 16 GB, L4T R35.3.1, TensorRT 8.5.2, OpenCV 4.2.0, MAXN, `videohub_pc4`
+holding `/dev/video4`, `nvv4l2decoder` present, free disk > 1 GB. If `sudo -n` is refused (password
+needed), run these two yourself in an interactive `ssh unitree@192.168.123.164`: `sudo nvpmodel -q` and
+`sudo fuser -v /dev/video*`. **Stop if anything differs.**
+
+## 2. Copy the project (writes)
+
+```bash
+scripts/deploy.sh all      # mkdir ~/aayush_person_track/{models,src,build,logs,scripts,frames}; copy src, Makefile, scripts, 10 ONNX (~100 MB)
+```
+
+## 3. Build the engines on the robot (writes models/*.engine, logs/trtexec_*)
+
+```bash
+g1_ssh "cd ~/aayush_person_track && nohup scripts/build_engines.sh > logs/build_engines.out 2>&1 &"
+g1_ssh "tail -5 ~/aayush_person_track/logs/build_engines.out"      # progress; ~1-3 min per engine, 12 engines
+g1_ssh "cat ~/aayush_person_track/logs/engines.md"                  # table at the end
+```
+Order: 640x384 first (the default engine), then 640x640, 416x416, 416x256, 320x320, 320x192, each fp16 + fp32.
+
+If YOLO26n fails (the NMS-free head ends in TopK / GatherElements / an integer Mod; TensorRT 8.5's parser
+supports all of them, but this is the part most likely to fail):
+1. same weights, raw head + NMS in C++: `scripts/build_engines.sh models/yolo26n-raw_640x384.onnx`
+2. YOLO11n: `scripts/build_engines.sh models/yolo11n_640x384.onnx`
+3. the lab's `make_trt85_onnx.py` approach (fold shapes, split ops) on the laptop, then copy again.
+The app reads the output shape and picks the right decoder by itself.
+
+## 4. Build the app (writes build/)
+
+```bash
+g1_ssh "cd ~/aayush_person_track && make -j4 2>&1 | tail -5"      # clock-skew warnings are expected
+g1_ssh "cd ~/aayush_person_track && build/person_track --source videohub --duration 10 --print-every 15"
+```
+Smoke test: the camera line should say `1280x720 BGR`, and rows should show a target ID and a box when
+someone is in view.
+
+## 5a. Offline checks on a recorded clip (writes frames/, logs/)
+
+Walk around in front of the head camera for 60 s while this records (only listens to the multicast stream):
+```bash
+g1_ssh "cd ~/aayush_person_track && scripts/record_clip.sh 60 frames/clip1.h264"
+g1_ssh "cd ~/aayush_person_track && scripts/run_offline.sh frames/clip1.h264"
+```
+fp16 vs fp32 agreement (same input tensors) and the pipeline's maximum frame rate without the camera
+limit, for 640x384, 640x640, 416x416, 320x320.
+
+## 5b. Live, 2 minutes, Unitree services running (writes logs/)
+
+During each run: stand ~2 m away, walk left/right, turn around, crouch, leave the view for ~5 s and come
+back, and if possible have a second person cross in front of you.
+```bash
+g1_ssh "cd ~/aayush_person_track && TAG=lab scripts/run_live.sh"                               # lab pipeline (BGR)
+g1_ssh "cd ~/aayush_person_track && SOURCE=videohub-nv12 TAG=nv12 scripts/run_live.sh"          # NV12, no CPU colour conversion
+g1_ssh "cd ~/aayush_person_track && SOURCE=videohub-nv12 TAG=nv12_dec EXTRA='--dec-opts enable-max-performance=1' scripts/run_live.sh"
+g1_ssh "cd ~/aayush_person_track && ENGINE=models/yolo26n_640x640.fp16.engine TAG=640sq scripts/run_live.sh"  # your original 640x640
+g1_ssh "cd ~/aayush_person_track && DUR=30 VIDEO=30 TAG=video scripts/run_live.sh"             # annotated MP4
+```
+Optional A/B for latency: `EXTRA=--zero-copy`, `EXTRA=--no-graph`, `EXTRA='--dec-opts disable-dpb=1'`
+(only if the stream has no B-frames; if the picture breaks, drop it).
+
+## 6. Results back to the laptop
+
+```bash
+scripts/fetch_results.sh          # logs -> results/robot_<time>/, RESULTS.md -> docs/RESULTS.md (+ copy on the robot)
+```
+Then commit `docs/RESULTS.md` (raw CSV / logs / MP4 stay out of git).
+
+## Not without your explicit OK
+
+- Option B (stop `videohub_pc4`, read `/dev/video4` directly: the only way above 15 FPS; breaks Unitree's
+  camera feed until reboot). The app already supports it: `--source /dev/video4 --width 848 --height 480 --fps 60`.
+- Anything with sudo beyond Phase 1, reboots, power mode, files outside `~/aayush_person_track`.
+- Phase 6 (ROS 2 topic, head location with YOLO26n-pose).

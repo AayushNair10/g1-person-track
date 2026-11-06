@@ -1,0 +1,245 @@
+#include "camera.hpp"
+
+#include <cuda_runtime_api.h>
+
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+#include "cuda_utils.hpp"
+#include "timing.hpp"
+
+namespace pt {
+
+namespace {
+
+// Unitree's videohub_pc4 owns the head camera (RealSense D435i colour, 1920x1080 @ 15 fps) and multicasts
+// it as 1280x720 H.264 RTP on eth0. Receiving that stream keeps Unitree's own video working; the Jetson's
+// hardware decoder (nvv4l2decoder) unpacks it. This prefix is the lab's tested pipeline up to the decoder.
+const char* kVideohubPrefix =
+    "udpsrc multicast-group=230.1.1.1 port=1720 multicast-iface=eth0 auto-multicast=true "
+    "caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" ! "
+    "rtph264depay ! h264parse ! nvv4l2decoder";
+
+// After the decoder. BGR = the lab's exact tail (videoconvert does BGRx -> BGR on the CPU).
+// NV12 = the decoder's own format, copied out by nvvidconv (VIC hardware), no CPU conversion.
+std::string tail(bool nv12, bool live) {
+    const std::string sink = live ? "appsink drop=true max-buffers=1 sync=false"
+                                  : "appsink drop=false max-buffers=4 sync=false";
+    if (nv12) return " ! nvvidconv ! video/x-raw,format=NV12 ! " + sink;
+    return " ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! video/x-raw,format=BGR ! " + sink;
+}
+
+bool ends_with(const std::string& s, const char* suffix) {
+    const size_t n = std::strlen(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+[[noreturn]] void die(const std::string& msg) {
+    std::fprintf(stderr, "[camera] %s\n", msg.c_str());
+    std::exit(1);
+}
+
+}  // namespace
+
+Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()) {
+    const std::string& src = cfg.source;
+    const std::string dec = cfg.dec_opts.empty() ? "" : " " + cfg.dec_opts;
+    bool ok = false;
+    if (src == "videohub" || src == "videohub-bgr" || src == "videohub-nv12") {
+        const bool nv12 = src == "videohub-nv12";
+        const std::string pipe = kVideohubPrefix + dec + tail(nv12, true);
+        desc_ = std::string("videohub stream rtp://230.1.1.1:1720 (") + (nv12 ? "NV12" : "BGR") + ")";
+        live_ = true;
+        std::fprintf(stderr, "[camera] pipeline: %s\n", pipe.c_str());
+        ok = cap_->open(pipe, cv::CAP_GSTREAMER);
+    } else if (ends_with(src, ".h264") || ends_with(src, ".264")) {
+        const bool nv12 = cfg.format != "bgr";
+        const std::string pipe =
+            "filesrc location=\"" + src + "\" ! h264parse ! nvv4l2decoder" + dec + tail(nv12, false);
+        desc_ = "H.264 file " + src + (nv12 ? " (NV12)" : " (BGR)");
+        live_ = false;
+        std::fprintf(stderr, "[camera] pipeline: %s\n", pipe.c_str());
+        ok = cap_->open(pipe, cv::CAP_GSTREAMER);
+    } else if (src.rfind("/dev/video", 0) == 0) {
+        // Option B. Only possible after videohub_pc4 releases the device -- never done by this program.
+        desc_ = "V4L2 " + src;
+        live_ = true;
+        if (src.size() > 10) ok = cap_->open(std::atoi(src.c_str() + 10), cv::CAP_V4L2);
+        if (!ok) ok = cap_->open(src, cv::CAP_V4L2);
+        if (ok) {
+            cap_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
+            cap_->set(cv::CAP_PROP_FRAME_WIDTH, cfg.width);
+            cap_->set(cv::CAP_PROP_FRAME_HEIGHT, cfg.height);
+            cap_->set(cv::CAP_PROP_FPS, cfg.fps);
+            cap_->set(cv::CAP_PROP_BUFFERSIZE, 1);
+        }
+    } else if (src.find('!') != std::string::npos) {
+        desc_ = "GStreamer pipeline";
+        live_ = src.find("filesrc") == std::string::npos;
+        ok = cap_->open(src, cv::CAP_GSTREAMER);
+    } else {
+        desc_ = "video file " + src;
+        live_ = false;
+        ok = cap_->open(src);
+    }
+    if (!ok)
+        die("cannot open " + desc_ +
+            "\n  videohub: is videohub_pc4 running, and was OpenCV built with GStreamer?"
+            "\n  /dev/videoN: another program (videohub_pc4) probably holds it");
+
+    cv::Mat probe;
+    if (!cap_->read(probe) || probe.empty()) die(desc_ + " opened but gives no frames");
+    if (!probe.isContinuous()) probe = probe.clone();
+    if (probe.type() == CV_8UC3) {
+        fmt_ = PixelFormat::BGR;
+        w_ = probe.cols;
+        h_ = probe.rows;
+        stride_ = probe.cols * 3;
+    } else if (probe.type() == CV_8UC1 && probe.rows % 3 == 0) {
+        fmt_ = PixelFormat::NV12;  // OpenCV hands NV12 over as one (h * 3/2) x w plane
+        w_ = probe.cols;
+        h_ = probe.rows * 2 / 3;
+        stride_ = probe.cols;
+    } else {
+        die("unsupported frame type " + std::to_string(probe.type()) + " (" + std::to_string(probe.cols) + "x" +
+            std::to_string(probe.rows) + ")");
+    }
+    rows_ = probe.rows;
+    type_ = probe.type();
+    bytes_ = probe.total() * probe.elemSize();
+    src_fps_ = cap_->get(cv::CAP_PROP_FPS);
+    if (!(src_fps_ > 0 && src_fps_ < 1000)) src_fps_ = 0.0;
+
+    slots_.resize(live_ ? 3 : 4);
+    for (auto& s : slots_) CUDA_CHECK(cudaHostAlloc(reinterpret_cast<void**>(&s.data), bytes_, cudaHostAllocMapped));
+    // the probe frame is frame 1
+    std::memcpy(slots_[0].data, probe.data, bytes_);
+    Frame& f = slots_[0].frame;
+    f = Frame{slots_[0].data, bytes_, w_, h_, stride_, fmt_, 1, now_s(), 0.0, 0};
+    slots_[0].state = Slot::Ready;
+    ready_.push_back(0);
+    frames_read_ = 1;
+
+    std::fprintf(stderr, "[camera] %s: %dx%d %s, %s\n", desc_.c_str(), w_, h_, fmt_ == PixelFormat::NV12 ? "NV12" : "BGR",
+                 live_ ? "live (newest frame wins)" : "file (every frame)");
+    thread_ = std::thread(&Camera::loop, this);
+}
+
+Camera::~Camera() {
+    stop();
+    if (!finished_) return;  // reader thread still stuck in a read: leave its memory and capture alone
+    delete cap_;
+    for (auto& s : slots_) cudaFreeHost(s.data);
+}
+
+void Camera::stop() {
+    running_ = false;
+    cv_.notify_all();
+    if (!thread_.joinable()) return;
+    for (int i = 0; i < 300 && !finished_; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (finished_) {
+        thread_.join();
+    } else {
+        std::fprintf(stderr, "[camera] reader thread did not stop (source stalled); leaving it\n");
+        thread_.detach();
+    }
+}
+
+int Camera::take_free_slot_locked() {
+    for (size_t i = 0; i < slots_.size(); ++i)
+        if (slots_[i].state == Slot::Free) return static_cast<int>(i);
+    return -1;
+}
+
+void Camera::loop() {
+    double t_win = now_s();
+    int n_win = 0;
+    uint64_t seq = 1;
+    while (running_) {
+        int s = -1;
+        {
+            std::unique_lock<std::mutex> lk(m_);
+            if (live_) {
+                s = take_free_slot_locked();
+                if (s < 0 && !ready_.empty()) {  // cannot happen with 3 slots, but never block a live source
+                    s = ready_.front();
+                    ready_.pop_front();
+                    ++frames_dropped_;
+                }
+            } else {
+                cv_.wait(lk, [&] { return !running_ || take_free_slot_locked() >= 0; });
+                if (!running_) break;
+                s = take_free_slot_locked();
+            }
+            if (s < 0) break;
+            slots_[s].state = Slot::Writing;
+        }
+        cv::Mat m(rows_, w_, type_, slots_[s].data);
+        const double t0 = now_s();
+        const bool ok = cap_->read(m);
+        const double t1 = now_s();
+        if (!ok || m.empty()) {
+            std::lock_guard<std::mutex> lk(m_);
+            slots_[s].state = Slot::Free;
+            if (live_) std::fprintf(stderr, "[camera] stream ended or read failed\n");
+            break;
+        }
+        if (m.data != slots_[s].data) {  // OpenCV gave its own buffer: copy (same size only)
+            if (m.isContinuous() && m.total() * m.elemSize() == bytes_) {
+                std::memcpy(slots_[s].data, m.data, bytes_);
+            } else {
+                std::fprintf(stderr, "[camera] frame size changed mid-stream; stopping\n");
+                std::lock_guard<std::mutex> lk(m_);
+                slots_[s].state = Slot::Free;
+                break;
+            }
+        }
+        ++frames_read_;
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            slots_[s].frame = Frame{slots_[s].data, bytes_, w_, h_, stride_, fmt_, ++seq, t1, 1000.0 * (t1 - t0), s};
+            slots_[s].state = Slot::Ready;
+            if (live_) {
+                while (!ready_.empty()) {  // an unread older frame: drop it, newest wins
+                    slots_[ready_.front()].state = Slot::Free;
+                    ready_.pop_front();
+                    ++frames_dropped_;
+                }
+            }
+            ready_.push_back(s);
+        }
+        cv_.notify_all();
+        ++n_win;
+        if (t1 - t_win >= 1.0) {
+            capture_fps_ = n_win / (t1 - t_win);
+            n_win = 0;
+            t_win = t1;
+        }
+    }
+    finished_ = true;
+    cv_.notify_all();
+}
+
+int Camera::next(Frame& f, int timeout_ms) {
+    std::unique_lock<std::mutex> lk(m_);
+    cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms), [&] { return !ready_.empty() || finished_ || !running_; });
+    if (!running_) return -1;
+    if (ready_.empty()) return finished_ ? -1 : 0;
+    const int s = ready_.front();
+    ready_.pop_front();
+    slots_[s].state = Slot::InUse;
+    f = slots_[s].frame;
+    return 1;
+}
+
+void Camera::release(const Frame& f) {
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        if (f.slot >= 0 && f.slot < static_cast<int>(slots_.size())) slots_[f.slot].state = Slot::Free;
+    }
+    cv_.notify_all();
+}
+
+}  // namespace pt
