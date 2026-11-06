@@ -7,7 +7,8 @@
 //                   the GPU letterbox kernel converts)
 //   <file>.h264     raw H.264 recorded by scripts/record_clip.sh, decoded by the hardware decoder
 //   <file>.mp4 ...  any video file OpenCV can read (CPU decode)
-//   /dev/videoN     V4L2 camera (Option B: only works if videohub_pc4 has been stopped -- ask first)
+//   /dev/videoN     the camera directly (Option B: only works after videohub_pc4 has been stopped by hand);
+//                   OpenCV V4L2 -> BGR, or with format nv12 / hw-resize GStreamer v4l2src -> VIC -> NV12
 //   "... ! appsink" any GStreamer pipeline ending in appsink (BGR or NV12)
 // Live sources keep only the newest frame (older ones are dropped and counted); files deliver every frame.
 // Hardware resize (out_w/out_h, videohub and .h264 sources): the Jetson's VIC (nvvidconv) scales the decoded
@@ -32,9 +33,9 @@ namespace pt {
 
 struct CameraConfig {
     std::string source = "videohub";
-    std::string format = "auto";  // for .h264 files: bgr | nv12 (auto = nv12)
+    std::string format = "auto";  // .h264 files: bgr | nv12 (auto = nv12); /dev/videoN: bgr | nv12 (auto = bgr)
     std::string dec_opts;         // extra nvv4l2decoder properties, e.g. "enable-max-performance=1"
-    int width = 1280, height = 720, fps = 15;  // only for /dev/videoN
+    int width = 1280, height = 720, fps = 15;  // /dev/videoN: mode to ask for (YUYV)
     int out_w = 0, out_h = 0;  // > 0: VIC scales frames to this size (NV12; videohub / .h264 sources)
     int every = 1;             // deliver source frames 1, 1+N, 1+2N, ... (the others are skipped uncopied)
 };

@@ -81,17 +81,39 @@ Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()), every_(c
         live_ = false;
         ok = open_gst("filesrc location=\"" + src + "\" ! h264parse ! nvv4l2decoder" + dec, nv12, false);
     } else if (src.rfind("/dev/video", 0) == 0) {
-        // Option B. Only possible after videohub_pc4 releases the device -- never done by this program.
-        desc_ = "V4L2 " + src;
+        // Option B: the camera directly. Only possible after videohub_pc4 has been stopped by hand -- this
+        // program never stops it. Two ways in:
+        //   default        OpenCV V4L2, device opened by index, YUYV, OpenCV converts to BGR on the CPU
+        //                  (the lab guide's method)
+        //   --format nv12  GStreamer v4l2src, YUYV converted to NV12 by the VIC (no CPU colour conversion);
+        //   / --hw-resize  the VIC also scales; falls back to the default way if the pipeline does not start
         live_ = true;
-        if (src.size() > 10) ok = cap_->open(std::atoi(src.c_str() + 10), cv::CAP_V4L2);
-        if (!ok) ok = cap_->open(src, cv::CAP_V4L2);
-        if (ok) {
-            cap_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
-            cap_->set(cv::CAP_PROP_FRAME_WIDTH, cfg.width);
-            cap_->set(cv::CAP_PROP_FRAME_HEIGHT, cfg.height);
-            cap_->set(cv::CAP_PROP_FPS, cfg.fps);
-            cap_->set(cv::CAP_PROP_BUFFERSIZE, 1);
+        const std::string mode = std::to_string(cfg.width) + "x" + std::to_string(cfg.height) + " @ " +
+                                 std::to_string(cfg.fps) + " FPS";
+        if (cfg.format == "nv12" || scaled) {
+            desc_ = "camera " + src + " " + mode + " (GStreamer, YUYV -> NV12 on the VIC" + scaled_desc + ")";
+            ok = open_gst("v4l2src device=" + src + " ! video/x-raw,format=YUY2,width=" + std::to_string(cfg.width) +
+                              ",height=" + std::to_string(cfg.height) + ",framerate=" + std::to_string(cfg.fps) + "/1",
+                          true, true);
+            if (!ok) std::fprintf(stderr, "[camera] GStreamer v4l2src did not start; trying OpenCV V4L2 (BGR)\n");
+        }
+        if (!ok) {
+            desc_ = "camera " + src + " " + mode + " (OpenCV V4L2, YUYV -> BGR on the CPU)";
+            if (src.size() > 10) ok = cap_->open(std::atoi(src.c_str() + 10), cv::CAP_V4L2);  // by index: more
+            if (!ok) ok = cap_->open(src, cv::CAP_V4L2);                                         // reliable in 4.2
+            if (ok) {  // format first, then size, then rate
+                cap_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
+                cap_->set(cv::CAP_PROP_FRAME_WIDTH, cfg.width);
+                cap_->set(cv::CAP_PROP_FRAME_HEIGHT, cfg.height);
+                cap_->set(cv::CAP_PROP_FPS, cfg.fps);
+                cap_->set(cv::CAP_PROP_BUFFERSIZE, 1);
+                const int fcc = static_cast<int>(cap_->get(cv::CAP_PROP_FOURCC));
+                const char f4[5] = {static_cast<char>(fcc & 255), static_cast<char>((fcc >> 8) & 255),
+                                    static_cast<char>((fcc >> 16) & 255), static_cast<char>((fcc >> 24) & 255), 0};
+                std::fprintf(stderr, "[camera] %s: driver reports %.0fx%.0f @ %.1f FPS, format %s\n", src.c_str(),
+                             cap_->get(cv::CAP_PROP_FRAME_WIDTH), cap_->get(cv::CAP_PROP_FRAME_HEIGHT),
+                             cap_->get(cv::CAP_PROP_FPS), f4);
+            }
         }
     } else if (src.find('!') != std::string::npos) {
         desc_ = "GStreamer pipeline";
@@ -103,11 +125,13 @@ Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()), every_(c
         ok = cap_->open(src);
     }
     if (scaled && !hw_resized_ && ok)
-        std::fprintf(stderr, "[camera] hardware resize only works for videohub / .h264 sources; full-size frames\n");
+        std::fprintf(stderr, "[camera] hardware resize only works for videohub / .h264 / /dev/videoN (GStreamer); "
+                             "full-size frames\n");
     if (!ok)
         die("cannot open " + desc_ +
             "\n  videohub: is videohub_pc4 running, and was OpenCV built with GStreamer?"
-            "\n  /dev/videoN: another program (videohub_pc4) probably holds it");
+            "\n  /dev/videoN: is videohub_pc4 still holding it (sudo fuser -v /dev/video*)? is this a size / rate"
+            "\n  the camera offers (v4l2-ctl -d /dev/video4 --list-formats-ext)? permission (ls -l /dev/video4)?");
 
     cv::Mat probe;
     if (!cap_->read(probe) || probe.empty()) die(desc_ + " opened but gives no frames");
@@ -142,6 +166,9 @@ Camera::Camera(const CameraConfig& cfg) : cap_(new cv::VideoCapture()), every_(c
     ready_.push_back(0);
     frames_read_ = 1;
 
+    if (src.rfind("/dev/video", 0) == 0 && !hw_resized_ && (w_ != cfg.width || h_ != cfg.height))
+        std::fprintf(stderr, "[camera] asked the camera for %dx%d, got %dx%d (boxes are in the frames' pixels)\n",
+                     cfg.width, cfg.height, w_, h_);
     if (hw_resized_ && (w_ != cfg.out_w || h_ != cfg.out_h))
         std::fprintf(stderr, "[camera] asked the VIC for %dx%d, got %dx%d\n", cfg.out_w, cfg.out_h, w_, h_);
     std::fprintf(stderr, "[camera] %s: %dx%d %s, %s%s\n", desc_.c_str(), w_, h_, fmt_ == PixelFormat::NV12 ? "NV12" : "BGR",

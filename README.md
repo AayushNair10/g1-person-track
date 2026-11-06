@@ -133,8 +133,10 @@ keeping every frame and cutting the delay from frame arrival to result. Done:
   (the last one raises the decoder clock: lower latency, slightly more power)
 
 `scripts/run_offline.sh` measures the pipeline's maximum rate without the camera limit. Going above 15 FPS live
-needs Option B (direct RealSense, up to 60 FPS). The app supports it (`--source /dev/video4`), but it means
-stopping `videohub_pc4`, so it is never done without your OK.
+needs Option B: the RealSense colour sensor read directly, up to 60 FPS, after `videohub_pc4` has been stopped by
+hand (the program never stops it). `--source /dev/video4 --width 640 --height 360 --fps 60` (OpenCV V4L2, as the
+lab guide says) or add `--format nv12` (GStreamer `v4l2src`, the VIC converts YUYV -> NV12). Steps:
+[docs/RUNBOOK.md](docs/RUNBOOK.md) section 7.
 
 ## Layout
 

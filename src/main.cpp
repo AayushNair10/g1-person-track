@@ -56,8 +56,10 @@ void usage(const char* prog) {
         "usage: %s [options]\n"
         "  --engine PATH       TensorRT engine (default models/yolo26n_640x384.fp16.engine)\n"
         "  --source SRC        videohub | videohub-nv12 | FILE.h264 | FILE.mp4 | /dev/videoN | 'gst pipeline ! appsink'\n"
-        "                      (default videohub = the lab's tested head-camera stream pipeline)\n"
-        "  --format bgr|nv12   pixel format for .h264 files (default nv12)\n"
+        "                      (default videohub = Option A, the lab's tested head-camera stream pipeline;\n"
+        "                      /dev/video4 = Option B, the camera directly, after videohub_pc4 was stopped by hand)\n"
+        "  --format bgr|nv12   .h264 files: default nv12. /dev/videoN: default bgr (OpenCV V4L2); nv12 = GStreamer\n"
+        "                      v4l2src with the VIC converting YUYV -> NV12 (no CPU colour conversion)\n"
         "  --hw-resize         videohub / .h264: the VIC (nvvidconv) scales frames to the model's picture size\n"
         "                      and hands over NV12 (e.g. 640x360 instead of 1280x720); boxes stay in camera pixels\n"
         "  --every N           process 1 of every N frames (others are skipped uncopied; default 1)\n"
@@ -79,8 +81,9 @@ void usage(const char* prog) {
         "  --zero-copy         let the GPU read the pinned frame directly instead of copying it first\n"
         "  --print-every N     print every Nth frame to stdout (default 1)\n"
         "  --quiet             no per-frame lines on stdout\n"
-        "  --width/--height    camera size (default 1280x720: the videohub stream; /dev/videoN: requested size)\n"
-        "  --fps N             only for /dev/videoN\n",
+        "  --width/--height    camera size (default 1280x720: the videohub stream; /dev/videoN: mode to ask for)\n"
+        "  --fps N             /dev/videoN: frame rate to ask for (default 15; the D435i colour sensor does 60\n"
+        "                      up to 960x540, 30 at 1280x720 and 1920x1080)\n",
         prog);
 }
 
@@ -255,13 +258,20 @@ int main(int argc, char** argv) {
     cudaEvent_t ev[5];
     for (auto& e : ev) CUDA_CHECK(cudaEventCreate(&e));
 
-    // --every N: same memory in seconds for lost tracks and for the target
+    // Lost-track and target memory: 30 frames, as in the benchmark (Ultralytics counts frames; at the benchmark's
+    // 30 FPS that is 1 s). Kept at >= 1 s for a direct camera above 30 FPS, and in seconds for --every N.
+    const bool direct = a.source.rfind("/dev/video", 0) == 0;
+    const double rate = direct ? (cam.source_fps() > 0 ? cam.source_fps() : a.fps) : 30.0;
+    const double mem_scale = std::max(1.0, rate / 30.0) / a.every;
     pt::OCSortConfig oc;
-    oc.track_buffer = std::max(1, (oc.track_buffer + a.every / 2) / a.every);
+    oc.track_buffer = std::max(1, static_cast<int>(std::lround(oc.track_buffer * mem_scale)));
     pt::OCSort tracker(oc);
     pt::TargetConfig tc;
     tc.relock_min_iou = a.relock_iou;
-    tc.reacquire_after = std::max(1, (tc.reacquire_after + a.every / 2) / a.every);
+    tc.reacquire_after = std::max(1, static_cast<int>(std::lround(tc.reacquire_after * mem_scale)));
+    if (oc.track_buffer != 30)
+        std::fprintf(stderr, "[app] tracker memory %d frames, target re-acquire after %d frames\n", oc.track_buffer,
+                     tc.reacquire_after);
     pt::TargetSelector target(tc);
 
     std::FILE* csv = nullptr;

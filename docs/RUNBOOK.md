@@ -123,9 +123,28 @@ scripts/fetch_results.sh          # logs -> results/robot_<time>/, RESULTS.md ->
 ```
 Then commit `docs/RESULTS.md` (raw CSV / logs / MP4 stay out of git).
 
+## 7. Option B: the camera directly (you stop the service by hand)
+
+Unitree's camera feed (its app, the SDK's VideoClient) stops until the robot is rebooted: tell anyone else
+using the robot. This program never stops or restarts the service.
+
+```bash
+cat /sys/class/video4linux/video4/name                 # should be the D435i's RGB node
+v4l2-ctl -d /dev/video4 --list-formats-ext | head -60  # modes (if v4l2-ctl is installed)
+sudo pkill -f videohub_pc4
+sleep 5; pgrep -a videohub                             # nothing = stopped (if it is back: master_service, ask the lab)
+sudo fuser -v /dev/video*                              # nothing listed for /dev/video4
+cd ~/aayush_person_track
+build/person_track --source /dev/video4 --width 640 --height 360 --fps 60 --print-every 60
+```
+640x360 is exactly the picture inside the 640x384 model input, so nothing is resized. Variants:
+`--format nv12` (the VIC converts YUYV, no CPU colour conversion), `--width 848 --height 480` (+ `--hw-resize`),
+`--width 1280 --height 720 --fps 30 --hw-resize`. Logged runs: `SOURCE=/dev/video4 TAG=optB
+EXTRA="--width 640 --height 360 --fps 60" scripts/run_live.sh`. Boxes are in the camera's own pixels
+(640x360 here). Below 60 FPS in a dim room: the camera's auto exposure is lengthening the exposure (more light
+helps). Bring the service back with a reboot.
+
 ## Not without your explicit OK
 
-- Option B (stop `videohub_pc4`, read `/dev/video4` directly: the only way above 15 FPS; breaks Unitree's
-  camera feed until reboot). The app already supports it: `--source /dev/video4 --width 848 --height 480 --fps 60`.
-- Anything with sudo beyond Phase 1, reboots, power mode, files outside `~/aayush_person_track`.
+- Anything with sudo beyond Phase 1 and step 7, reboots, power mode, files outside `~/aayush_person_track`.
 - Phase 6 (ROS 2 topic, head location with YOLO26n-pose).
