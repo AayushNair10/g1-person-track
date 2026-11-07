@@ -1,7 +1,7 @@
 """Desktop check: the robot's letterbox (BGR and NV12) and output decoding, run on the CPU, against
 Ultralytics/OpenCV (yolo_ref) and ONNX Runtime.
 
-    ~/Downloads/benchmark_face/.venv/bin/python tests/desktop/check_pipeline.py \
+    ~/Downloads/benchmark_face/.venv/bin/python tests/check_pipeline.py \
         --clips ~/Downloads/benchmark_face/tilt_results/tilt.mp4 ~/Downloads/benchmark_face/bench_results/webcam_clip.mp4
 
   1. input tensor: C++ letterbox_pixel() vs cv2.resize INTER_LINEAR_EXACT (platform-independent) + pad 114
@@ -24,7 +24,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import onnxruntime as ort  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]  # extras/person_yolo
 sys.path.insert(0, str(ROOT / "scripts"))
 import yolo_ref as R  # noqa: E402
 

@@ -1,6 +1,6 @@
 """Desktop check: the C++ OC-SORT gives the same tracks as Ultralytics' OC-SORT on the same detections.
 
-    ~/Downloads/benchmark_face/.venv/bin/python tests/desktop/check_tracker.py \
+    ~/Downloads/benchmark_face/.venv/bin/python tests/check_tracker.py \
         --clips ~/Downloads/benchmark_face/tilt_results/tilt.mp4 ~/Downloads/benchmark_face/bench_results/webcam_clip.mp4 \
         --models models/yolo26n_640x384.onnx models/yolo26n-raw_640x384.onnx
 
@@ -21,7 +21,7 @@ os.environ.setdefault("YOLO_OFFLINE", "1")
 import numpy as np  # noqa: E402
 import onnxruntime as ort  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]  # extras/person_yolo
 sys.path.insert(0, str(ROOT / "scripts"))
 import yolo_ref as R  # noqa: E402
 

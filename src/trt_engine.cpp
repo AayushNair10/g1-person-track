@@ -65,8 +65,9 @@ TrtEngine::TrtEngine(const std::string& engine_path, cudaStream_t stream, bool u
         CUDA_CHECK(cudaMemset(t.dev, 0, t.count * sizeof(float)));
         bindings_[i] = t.dev;
     }
-    if (in_.dims.nbDims != 4 || in_.dims.d[0] != 1 || in_.dims.d[1] != 3)
-        die(path_, "input must be 1x3xHxW");
+    if (in_.dims.nbDims != 4 || in_.dims.d[0] != 1 || (in_.dims.d[1] != 3 && in_.dims.d[3] != 3))
+        die(path_, "input must be 1x3xHxW or 1xHxWx3");
+    nhwc_ = in_.dims.d[1] != 3;
     CUDA_CHECK(cudaMallocHost(reinterpret_cast<void**>(&out_.host), out_.count * sizeof(float)));
 }
 
@@ -109,8 +110,10 @@ void TrtEngine::enqueue() {
     ++runs_;
 }
 
-void TrtEngine::download() {
-    CUDA_CHECK(cudaMemcpyAsync(out_.host, out_.dev, out_.count * sizeof(float), cudaMemcpyDeviceToHost, stream_));
+void TrtEngine::download() { download(out_.host); }
+
+void TrtEngine::download(float* host) {
+    CUDA_CHECK(cudaMemcpyAsync(host, out_.dev, out_.count * sizeof(float), cudaMemcpyDeviceToHost, stream_));
 }
 
 }  // namespace pt

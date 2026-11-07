@@ -3,24 +3,24 @@
 # folder runs/<NNN>_<TAG>/ for later comparison (scripts/analyze_runs.py).
 # Option B (default source /dev/video4): start it right after stopping videohub_pc4, on the same line:
 #   sudo -v; sudo pkill -f videohub_pc4; TAG=walk scripts/run_live.sh
-#   scripts/run_live.sh                                        120 s, default engine, 640x360 @ 30 FPS
+#   scripts/run_live.sh                                        120 s, face_gesture defaults (1280x720 @ 30)
 #   TAG=walk NOTE="2 m, walking left/right, lights on" scripts/run_live.sh
-#   DUR=60 ENGINE=models/yolo26n_416x256.fp16.engine TAG=416 scripts/run_live.sh
+#   DUR=60 ENGINE=models/yunet_320x192.fp16.engine TAG=face320 scripts/run_live.sh   (face model size)
 #   VIDEO=30 scripts/run_live.sh                               also save the first 30 s as an annotated MP4
-#   EXTRA="--width 848 --height 480" / EXTRA="--format nv12" / EXTRA="--hw-resize"   extra app options
+#   EXTRA="--no-hands" / EXTRA="--format nv12" / EXTRA="--width 848 --height 480"   extra app options
 # runs/<NNN>_<TAG>/: frames.csv (every frame), summary.md + summary.md.json (the app's summary), tegrastats.log
 # (CPU / GPU / RAM / power once a second), console.log (what the app printed), run.txt (settings, notes),
 # video.mp4 (if VIDEO). Nothing outside ~/aayush_person_track is written; nothing runs with sudo.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 DUR=${DUR:-120}
-ENGINE=${ENGINE:-models/yolo26n_640x384.fp16.engine}
+ENGINE=${ENGINE:-models/yunet_640x384.fp16.engine}
 SOURCE=${SOURCE:-/dev/video4}
 TAG=${TAG:-live}
 VIDEO=${VIDEO:-0}
 NOTE=${NOTE:-}
 EXTRA=${EXTRA:-}
-APP=build/person_track
+APP=build/face_gesture
 [ -x "$APP" ] || { echo "build first: make -j4"; exit 1; }
 # No waiting here: master_service restarts a stopped videohub_pc4 within ~2-3 s, so the app must start right away
 # (it opens the camera before loading the engine). Start as:  sudo pkill -f videohub_pc4; scripts/run_live.sh
@@ -33,7 +33,7 @@ mkdir -p "$RUN"
 video_args=()
 [ "$VIDEO" != 0 ] && video_args=(--save-video "$RUN/video.mp4" --save-seconds "$VIDEO")
 # shellcheck disable=SC2206
-cmd=("$APP" --engine "$ENGINE" --source "$SOURCE" --duration "$DUR" --quiet --label "$(basename "$RUN")"
+cmd=("$APP" --face-engine "$ENGINE" --source "$SOURCE" --duration "$DUR" --quiet --label "$(basename "$RUN")"
      --csv "$RUN/frames.csv" --summary "$RUN/summary.md" ${video_args[@]+"${video_args[@]}"} $EXTRA)
 
 {

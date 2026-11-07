@@ -6,8 +6,8 @@
 #include <cstdio>
 #include <vector>
 
-#include "../../src/ocsort.hpp"
-#include "../../src/target.hpp"
+#include "../src/ocsort.hpp"
+#include "../src/target.hpp"
 
 int main(int argc, char** argv) {
     if (argc < 3) {

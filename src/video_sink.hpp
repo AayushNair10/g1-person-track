@@ -14,17 +14,28 @@
 #include <thread>
 #include <vector>
 
-#include "ocsort.hpp"
 #include "preprocess_math.hpp"
 
 namespace pt {
 
+// What to draw on a frame (camera pixels; scaled with box_scale when the frame was resized).
+struct OverlayBox {
+    float x1, y1, x2, y2;
+    bool highlight;     // the followed person's face: green, thick
+    std::string label;
+};
+struct OverlayHand {
+    float x[21], y[21];  // landmarks
+    bool highlight;
+    std::string label;   // e.g. "right: Thumbs up"
+};
 struct Overlay {
     uint64_t frame = 0;
-    std::vector<TrackOut> tracks;
-    bool has_target = false;
-    TrackOut target{};
     double fps = 0, latency_ms = 0;
+    std::vector<OverlayBox> boxes;
+    std::vector<float> points;  // x, y pairs (face points)
+    std::vector<OverlayHand> hands;
+    std::string status;         // appended to the status line
 };
 
 // Camera frame (BGR or NV12, as the camera delivers it) -> BGR image.

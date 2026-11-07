@@ -1,4 +1,5 @@
-// A TensorRT 8.5 engine (built by trtexec on the robot) with one float input and one float output.
+// A TensorRT 8.5 engine (built by trtexec on the robot) with one float input (1x3xHxW or 1xHxWx3) and one
+// float output.
 // Uses the TensorRT 8.5 binding API (getBindingName, enqueueV2). The inference can be recorded once as
 // a CUDA graph and replayed every frame, which removes most kernel-launch work from the CPU.
 // Engines built for a DLA core (trtexec --useDLACore=N --allowGPUFallback) need dla_core = N.
@@ -28,11 +29,13 @@ public:
 
     const Tensor& input() const { return in_; }
     const Tensor& output() const { return out_; }
-    int input_w() const { return in_.dims.d[3]; }
-    int input_h() const { return in_.dims.d[2]; }
+    bool input_nhwc() const { return nhwc_; }
+    int input_w() const { return nhwc_ ? in_.dims.d[2] : in_.dims.d[3]; }
+    int input_h() const { return in_.dims.d[1 + (nhwc_ ? 0 : 1)]; }
 
     void enqueue();   // run on the stream (async)
-    void download();  // output GPU -> pinned host (async)
+    void download();  // output GPU -> its pinned host buffer (async)
+    void download(float* host);  // output GPU -> another pinned host buffer of output().count floats (async)
     bool graph_active() const { return graph_exec_ != nullptr; }
     const std::string& path() const { return path_; }
 
@@ -45,6 +48,7 @@ private:
     nvinfer1::IExecutionContext* context_ = nullptr;
     Tensor in_, out_;
     void* bindings_[2] = {nullptr, nullptr};
+    bool nhwc_ = false;
     int runs_ = 0;
     bool graph_failed_ = false;
     cudaGraphExec_t graph_exec_ = nullptr;

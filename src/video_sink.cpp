@@ -79,32 +79,37 @@ void frame_to_bgr(const uint8_t* data, int w, int h, PixelFormat fmt, cv::Mat& b
 }
 
 void draw_overlay(cv::Mat& img, const Overlay& ov, float box_scale) {
+    static const int kBones[21][2] = {{0, 1},   {1, 2},   {2, 3},   {3, 4},   {0, 5},   {5, 6},   {6, 7},
+                                      {7, 8},   {5, 9},   {9, 10},  {10, 11}, {11, 12}, {9, 13},  {13, 14},
+                                      {14, 15}, {15, 16}, {13, 17}, {0, 17},  {17, 18}, {18, 19}, {19, 20}};
     const double scale = std::max(0.5, img.cols / 1280.0);
     const int thin = std::max(1, static_cast<int>(2 * scale)), thick = std::max(2, static_cast<int>(4 * scale));
-    auto px = [&](float v) { return static_cast<int>(v * box_scale); };  // camera -> frame pixels
-    char txt[128];
-    for (const auto& t : ov.tracks) {
-        const bool is_target = ov.has_target && t.id == ov.target.id;
-        if (is_target) continue;
-        cv::rectangle(img, cv::Point(px(t.x1), px(t.y1)), cv::Point(px(t.x2), px(t.y2)), cv::Scalar(160, 160, 160),
-                      thin);
-        std::snprintf(txt, sizeof(txt), "id %d", t.id);
-        cv::putText(img, txt, cv::Point(px(t.x1) + 4, px(t.y1) + static_cast<int>(22 * scale)),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.6 * scale, cv::Scalar(160, 160, 160), thin);
+    auto P = [&](float x, float y) { return cv::Point(static_cast<int>(x * box_scale), static_cast<int>(y * box_scale)); };
+    const cv::Scalar green(0, 220, 0), grey(160, 160, 160), orange(0, 160, 255), yellow(0, 255, 255);
+    for (const auto& b : ov.boxes) {
+        const cv::Scalar col = b.highlight ? green : grey;
+        cv::rectangle(img, P(b.x1, b.y1), P(b.x2, b.y2), col, b.highlight ? thick : thin);
+        if (!b.label.empty())
+            cv::putText(img, b.label, cv::Point(P(b.x1, b.y1).x + 2, std::max(P(b.x1, b.y1).y - 6, 14)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.6 * scale, col, thin);
     }
-    if (ov.has_target) {
-        const auto& t = ov.target;
-        cv::rectangle(img, cv::Point(px(t.x1), px(t.y1)), cv::Point(px(t.x2), px(t.y2)), cv::Scalar(0, 220, 0), thick);
-        std::snprintf(txt, sizeof(txt), "TARGET id %d  %.2f", t.id, t.score);
-        cv::putText(img, txt, cv::Point(px(t.x1) + 4, std::max(px(t.y1) - 8, 20)), cv::FONT_HERSHEY_SIMPLEX,
-                    0.8 * scale, cv::Scalar(0, 220, 0), thick);
+    for (size_t i = 0; i + 1 < ov.points.size(); i += 2)
+        cv::circle(img, P(ov.points[i], ov.points[i + 1]), std::max(2, thin), yellow, cv::FILLED);
+    for (const auto& h : ov.hands) {
+        const cv::Scalar col = h.highlight ? orange : grey;
+        for (const auto& b : kBones) cv::line(img, P(h.x[b[0]], h.y[b[0]]), P(h.x[b[1]], h.y[b[1]]), col, thin);
+        for (int i = 0; i < 21; ++i) cv::circle(img, P(h.x[i], h.y[i]), std::max(2, thin), col, cv::FILLED);
+        if (!h.label.empty()) {
+            const float top = *std::min_element(h.y, h.y + 21), left = *std::min_element(h.x, h.x + 21);
+            cv::putText(img, h.label, cv::Point(P(left, top).x, std::max(P(left, top).y - 8, 14)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.7 * scale, col, thick);
+        }
     }
-    char tgt[32] = "no target";
-    if (ov.has_target) std::snprintf(tgt, sizeof(tgt), "target id %d", ov.target.id);
-    std::snprintf(txt, sizeof(txt), "frame %llu  %.1f FPS  latency %.1f ms  tracked %zu  %s",
-                  static_cast<unsigned long long>(ov.frame), ov.fps, ov.latency_ms, ov.tracks.size(), tgt);
-    cv::putText(img, txt, cv::Point(10, static_cast<int>(30 * scale)), cv::FONT_HERSHEY_SIMPLEX, 0.8 * scale,
-                cv::Scalar(0, 255, 255), thin);
+    char txt[160];
+    std::snprintf(txt, sizeof(txt), "frame %llu  %.1f FPS  latency %.1f ms  %s",
+                  static_cast<unsigned long long>(ov.frame), ov.fps, ov.latency_ms, ov.status.c_str());
+    cv::putText(img, txt, cv::Point(10, static_cast<int>(30 * scale)), cv::FONT_HERSHEY_SIMPLEX, 0.8 * scale, yellow,
+                thin);
 }
 
 }  // namespace pt

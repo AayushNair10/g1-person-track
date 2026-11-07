@@ -1,4 +1,4 @@
-# Robot-day runbook (Option B: the head camera directly)
+# Robot-day runbook: face detection + hand gestures (head camera directly)
 
 Two terminal windows on the Mac:
 
@@ -7,10 +7,11 @@ Two terminal windows on the Mac:
 | **Terminal 1 (Mac)** | Terminal, prompt `aayushnair@...  %` | copying files to / from the robot, the analysis |
 | **Terminal 2 (Robot)** | second window (Cmd+N): `ssh unitree@192.168.123.164`, password, `1` at the ROS prompt; prompt `unitree@...:~$` | building and running on the robot |
 
-The program runs on the robot; its text output appears in Terminal 2. Everything it writes stays in
-`~/aayush_person_track/` on the robot. It never moves the robot, never uses sudo, and never stops or starts
-Unitree's services: you stop `videohub_pc4` by hand at the start of each run (step 5); `master_service` restarts
-it by itself, and it gets the camera back when our program exits (a reboot, step 10, resets everything).
+The program (`build/face_gesture`) runs on the robot; its text output appears in Terminal 2, the picture in the
+live view (http://192.168.123.164:8090/). Everything it writes stays in `~/aayush_person_track/` on the robot.
+It never moves the robot, never uses sudo, and never stops or starts Unitree's services: you stop
+`videohub_pc4` by hand at the start of each run (step 5); `master_service` restarts it by itself, and it gets
+the camera back when our program exits (a reboot, step 10, resets everything).
 
 ## 0. Connect (Mac)
 
@@ -20,38 +21,32 @@ Details -> TCP/IP: Configure IPv4 **Manually**, IP `192.168.123.222`, subnet `25
 
 ## 1. Copy the project (Terminal 1)
 
+The models are made on the Mac once (`~/Downloads/benchmark_face/.venv/bin/python scripts/export_face_hand.py`,
+already done). Then:
 ```bash
 cd ~/robot-yolo
 ssh unitree@192.168.123.164 "mkdir -p ~/aayush_person_track/models"
 scp -r src Makefile scripts unitree@192.168.123.164:aayush_person_track/
-scp models/*.onnx unitree@192.168.123.164:aayush_person_track/models/      # once; ~100 MB
+scp models/yunet_*.onnx models/palm_192.onnx models/handpose_224.onnx unitree@192.168.123.164:aayush_person_track/models/
 ```
-After code changes only the `src Makefile scripts` line is needed, then `make -j4` (step 3).
+After code changes only the `src Makefile scripts` line is needed, then step 3.
 
 ## 2. Build the engines (Terminal 2, once)
 
 ```bash
 cd ~/aayush_person_track && chmod +x scripts/*.sh
-PRECS=fp16 scripts/build_engines.sh models/yolo26n_640x384.onnx          # the default engine, 2-5 min
-```
-Must end with `exit 0` and a table row with a time in ms. If it says FAILED: build
-`models/yolo26n-raw_640x384.onnx` (same weights, raw head) or `models/yolo11n_640x384.onnx` and pass that engine
-with `ENGINE=...` / `--engine`. Optional, for the compute comparison (step 8):
-```bash
-PRECS=fp16 scripts/build_engines.sh models/yolo26n_416x256.onnx models/yolo26n_320x192.onnx
-LEAN=1 PRECS=fp16 scripts/build_engines.sh models/yolo26n_640x384.onnx models/yolo26n_416x256.onnx
-DLA=0 scripts/build_engines.sh models/yolo26n_640x384.onnx
+scripts/build_engines.sh          # yunet_640x384, palm_192, handpose_224, then yunet_416x256 and 320x192; fp16
 cat logs/engines.md
 ```
-`lean` = no cuDNN/cuBLAS (less RAM, faster start); `dla0` = runs on the Orin's deep-learning accelerator and
-leaves the GPU free (layers it cannot run fall back to the GPU). Skip any that fail.
+Each must end with `exit 0` and a table row with a time in ms; the first three are the ones the app needs.
+If one says FAILED, paste the output. (Optional: `LEAN=1 ...` builds without cuDNN/cuBLAS for less RAM;
+`PRECS="fp16 fp32"` adds fp32 engines for comparisons.)
 
 ## 3. Build the app (Terminal 2)
 
 ```bash
-make -j4                                     # ends with "built build/person_track"; clock-skew warnings are fine
+scripts/build.sh                  # ends with "built build/face_gesture" (same as make -j4)
 ```
-Same without make (FaceHandTrack-style, same preinstalled tools): `scripts/build.sh`.
 
 ## 4. Check the camera (Terminal 2, service still running)
 
@@ -81,43 +76,42 @@ sudo -v        # type the password now, so the next sudo does not pause (remembe
 ## 6. Quick test (Terminal 2)
 
 ```bash
-cd ~/aayush_person_track && sudo pkill -f videohub_pc4; build/person_track --print-every 30
+cd ~/aayush_person_track && sudo pkill -f videohub_pc4; build/face_gesture --print-every 30
 ```
-Defaults: `/dev/video4`, 640x360 @ 30 FPS (exactly the picture inside the 640x384 model input), the default
-engine. Look for `driver reports 640x360 @ 30.0 FPS, format YUYV`. One line per second:
-`frame,timestamp,target_id,x1,y1,x2,y2,conf,n_persons,...` (`target_id` -1 = nobody; box in 640x360 pixels).
-**Live view:** while it runs, open http://192.168.123.164:8090/ in a browser on the Mac (green box = the
-person being followed). Ctrl+C prints the summary (results per second should be close to 30). If it says the camera is busy, run
-`sudo -v` and try again (the restart won the race). Other mode if 640x360 is not offered:
-`--width 640 --height 480`. Below 30 FPS in a dim room = the camera's auto exposure: more light helps.
+Defaults: `/dev/video4` at 1280x720 @ 30 (hands need the pixels), `yunet_640x384`, the palm and hand engines.
+Look for `driver reports 1280x720 @ 30.0 FPS, format YUYV`, then one line per second
+(`target_id`, face box, `n_faces`, `n_hands`, `left_hand`, `right_hand`, timings). **Live view:** open
+http://192.168.123.164:8090/ on the Mac: green box = the followed face, orange skeletons = their hands with the
+gesture. Stand 1-2 m away, hold up a hand and make gestures; each recognised gesture prints a line such as
+`[   12.34 s] target 1, right hand: Thumbs up`. Check that **left/right** match your real hands (if they are
+swapped, tell me). Ctrl+C prints the summary. If it says the camera is busy, run `sudo -v` and try again.
+Faces only: add `--no-hands`.
 
-## 7. Recorded clip and offline checks (Terminal 2, optional)
+## 7. Recorded clip (Terminal 2, optional)
 
 ```bash
-sudo pkill -f videohub_pc4; scripts/record_clip.sh 60 frames/clip1.h264   # walk around for 60 s
-scripts/run_offline.sh frames/clip1.h264              # fp16 vs fp32, sizes, variants on identical frames
-python3 scripts/make_results.py                       # -> logs/RESULTS.md
+sudo pkill -f videohub_pc4; scripts/record_clip.sh 60 frames/clip1.h264      # make gestures for 60 s
+build/face_gesture --source frames/clip1.h264 --quiet --summary logs/clip1_640.md
+build/face_gesture --source frames/clip1.h264 --quiet --summary logs/clip1_320.md --face-engine models/yunet_320x192.fp16.engine
 ```
-The clip is the camera (640x360 @ 30) encoded by the hardware encoder; the app and the recorder cannot use the
-camera at the same time.
+The clip is the camera (1280x720 @ 30) encoded by the hardware encoder; replaying it runs every frame as fast
+as possible (the program's maximum rate) on identical frames, e.g. to compare face model sizes.
 
 ## 8. Logged live runs (Terminal 2)
 
 Each run: 120 s (`DUR=`), saved in its own folder `runs/<NNN>_<TAG>/` (frames.csv, summary, tegrastats.log,
-run.txt, console.log, video.mp4 with `VIDEO=`). Write what you did in `NOTE` so you can tell runs apart later.
-During each run: stand ~2 m away, walk left/right, turn around, crouch, leave the view ~5 s and come back, and if
-possible have a second person cross in front of you.
+run.txt, console.log with the gesture events, video.mp4 with `VIDEO=`). Write what you did in `NOTE`.
 ```bash
 sudo -v
-sudo pkill -f videohub_pc4; TAG=base NOTE="640x360@30, default engine, walking" VIDEO=30 scripts/run_live.sh
+sudo pkill -f videohub_pc4; TAG=base NOTE="1.5 m, all 15 gestures, both hands" VIDEO=30 scripts/run_live.sh
+sudo pkill -f videohub_pc4; TAG=far NOTE="3 m, gestures" scripts/run_live.sh
+sudo pkill -f videohub_pc4; TAG=face320 NOTE="smallest face model" ENGINE=models/yunet_320x192.fp16.engine scripts/run_live.sh
+sudo pkill -f videohub_pc4; TAG=faces NOTE="faces only" EXTRA="--no-hands" scripts/run_live.sh
 sudo pkill -f videohub_pc4; TAG=nv12 NOTE="VIC colour conversion" EXTRA="--format nv12" scripts/run_live.sh
-sudo pkill -f videohub_pc4; TAG=416 NOTE="416x256 engine" ENGINE=models/yolo26n_416x256.fp16.engine scripts/run_live.sh
-sudo pkill -f videohub_pc4; TAG=lean416 ENGINE=models/yolo26n_416x256.fp16.lean.engine scripts/run_live.sh
-sudo pkill -f videohub_pc4; TAG=dla ENGINE=models/yolo26n_640x384.fp16.dla0.engine scripts/run_live.sh
 ```
-Ctrl+C ends a run early and still saves everything. The live view (http://192.168.123.164:8090/) works during
-these runs too; it costs some CPU while a browser is open, so for fair comparisons keep it either closed in all
-runs or open in all (the comparison table shows "live view frames" per run).
+Ctrl+C ends a run early and still saves everything. The live view works during these runs too; it costs some
+CPU while a browser is open, so keep it either closed in all runs or open in all (the table shows "live view
+frames" per run).
 
 ## 9. Copy and compare (Terminal 1)
 

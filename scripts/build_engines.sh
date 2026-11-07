@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Phase 3 (on the robot): build TensorRT engines from the ONNX files with trtexec and measure them.
-#   cd ~/aayush_person_track && scripts/build_engines.sh                 # default set below
-#   scripts/build_engines.sh models/yolo26n-raw_640x384.onnx             # specific files
-#   PRECS=fp16 scripts/build_engines.sh ...                              # only fp16
+#   cd ~/aayush_person_track && scripts/build_engines.sh                 # default set below (face + hand models)
+#   scripts/build_engines.sh models/yunet_320x192.onnx                   # specific files
+#   PRECS="fp16 fp32" scripts/build_engines.sh ...                       # also fp32 (for comparisons)
 #   FORCE=1 ...                                                          # rebuild existing engines
 #   LEAN=1 PRECS=fp16 scripts/build_engines.sh ...    # no cuDNN/cuBLAS tactics: TensorRT then never loads those
 #                                                     # big libraries (less RAM, faster start) -> *.fp16.lean.engine
@@ -14,7 +14,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 TRTEXEC=${TRTEXEC:-/usr/src/tensorrt/bin/trtexec}
-PRECS=${PRECS:-"fp16 fp32"}
+PRECS=${PRECS:-fp16}
 LEAN=${LEAN:-}
 DLA=${DLA:-}
 mkdir -p logs models
@@ -35,8 +35,8 @@ fi
 if [ $# -gt 0 ]; then
     files=("$@")
 else
-    files=(models/yolo26n_640x384.onnx models/yolo26n_640x640.onnx models/yolo26n_416x416.onnx
-           models/yolo26n_416x256.onnx models/yolo26n_320x320.onnx models/yolo26n_320x192.onnx)
+    files=(models/yunet_640x384.onnx models/palm_192.onnx models/handpose_224.onnx
+           models/yunet_416x256.onnx models/yunet_320x192.onnx)
 fi
 
 for onnx in "${files[@]}"; do

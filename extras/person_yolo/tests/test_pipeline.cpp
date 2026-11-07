@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-#include "../../src/postprocess.hpp"
-#include "../../src/preprocess_math.hpp"
+#include "../src/postprocess.hpp"
+#include "../src/preprocess_math.hpp"
 
 static std::vector<unsigned char> read_file(const char* path) {
     std::FILE* f = std::fopen(path, "rb");

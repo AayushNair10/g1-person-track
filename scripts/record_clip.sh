@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # On the robot: record the head camera (Option B: /dev/video4 directly) to an
 # H.264 file with the Jetson's hardware encoder, for offline tests on identical frames (run_offline.sh).
-#   sudo pkill -f videohub_pc4; scripts/record_clip.sh 60 frames/clip_walk.h264     60 s at 640x360 @ 30 FPS
+#   sudo pkill -f videohub_pc4; scripts/record_clip.sh 60 frames/clip_walk.h264     60 s at 1280x720 @ 30 FPS
 #   (same line, no pause: master_service restarts videohub_pc4 within ~2-3 s)
-#   W=1280 H=720 FPS=30 scripts/record_clip.sh 60 frames/clip_720p.h264
-# Play back with: build/person_track --source frames/clip_walk.h264 ...  (the app cannot run at the same time:
+#   W=640 H=360 scripts/record_clip.sh 60 frames/clip_small.h264
+# Play back with: build/face_gesture --source frames/clip_walk.h264 ...  (the app cannot run at the same time:
 # the camera serves one program)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SECS=${1:-60}
 OUT=${2:-frames/clip_$(date +%H%M%S).h264}
 DEV=${DEV:-/dev/video4}
-W=${W:-640}
-H=${H:-360}
+W=${W:-1280}
+H=${H:-720}
 FPS=${FPS:-30}
 BITRATE=${BITRATE:-8000000}
 mkdir -p "$(dirname "$OUT")"
